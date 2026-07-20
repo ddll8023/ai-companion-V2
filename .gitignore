@@ -4,6 +4,7 @@ release/
 *.db
 *.log
 .env.local
+data/
 .venv/
 __pycache__/
 *.pyc
