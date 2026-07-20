@@ -12,16 +12,12 @@ from app.schemas.common import ErrorCode
 from app.utils.exception import ServiceException
 
 # 确保数据目录存在
-_db_url = settings.DATABASE_URL
-if _db_url.startswith("sqlite:///"):
-    _db_path = _db_url[len("sqlite:///") :]
-    if _db_path and _db_path != ":memory:":
-        _db_dir = os.path.dirname(_db_path)
-        if _db_dir:
-            os.makedirs(_db_dir, exist_ok=True)
+_db_dir = os.path.dirname(settings.db_file_path)
+if _db_dir:
+    os.makedirs(_db_dir, exist_ok=True)
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    settings.database_url,
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
@@ -31,11 +27,13 @@ engine = create_engine(
 
 @event.listens_for(engine, "connect")
 def set_sqlite_pragma(dbapi_connection, connection_record):
+    """设置 SQLite 连接时的 pragma 参数。"""
     cursor = dbapi_connection.cursor()
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
+
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

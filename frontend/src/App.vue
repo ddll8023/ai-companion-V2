@@ -1,10 +1,7 @@
 <script setup lang="ts">
+import AppLayout from '@/components/system/AppLayout.vue'
 </script>
 
 <template>
-  <div class="min-h-screen flex flex-col bg-bg text-text">
-    <main class="flex-1">
-      <router-view />
-    </main>
-  </div>
+  <AppLayout />
 </template>
