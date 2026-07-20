@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from sqlalchemy import select, desc, func
 from sqlalchemy.orm import Session
 
@@ -73,8 +75,6 @@ def query_audit_logs(db: Session, query: AuditLogQueryRequest):
             .limit(query.page_size)
         ).all()
     )
-
-    import math
 
     return PaginatedResponse(
         lists=[AuditLogResponse.model_validate(item) for item in items],

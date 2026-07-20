@@ -13,6 +13,9 @@ const request: AxiosInstance = axios.create({
 // 请求拦截器
 request.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    if (import.meta.env.DEV) {
+      console.debug(`[API] ${config.method?.toUpperCase()} ${config.url}`)
+    }
     return config
   },
   (error) => Promise.reject(error),

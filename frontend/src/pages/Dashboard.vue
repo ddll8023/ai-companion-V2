@@ -14,9 +14,9 @@
         </div>
         <p
           class="mt-2 text-lg font-semibold"
-          :class="healthData?.status === 'running' ? 'text-success' : 'text-error'"
+          :class="appStore.healthData?.status === 'running' ? 'text-success' : 'text-error'"
         >
-          {{ healthData?.status === 'running' ? '运行中' : '异常' }}
+          {{ appStore.healthData?.status === 'running' ? '运行中' : '异常' }}
         </p>
       </div>
 
@@ -27,9 +27,9 @@
         </div>
         <p
           class="mt-2 text-lg font-semibold"
-          :class="healthData?.database?.ready ? 'text-success' : 'text-error'"
+          :class="appStore.healthData?.database?.ready ? 'text-success' : 'text-error'"
         >
-          {{ healthData?.database?.ready ? '就绪' : '不可用' }}
+          {{ appStore.healthData?.database?.ready ? '就绪' : '不可用' }}
         </p>
       </div>
 
@@ -40,41 +40,29 @@
         </div>
         <p
           class="mt-2 text-lg font-semibold"
-          :class="healthData?.data_directory?.writable ? 'text-success' : 'text-error'"
+          :class="appStore.healthData?.data_directory?.writable ? 'text-success' : 'text-error'"
         >
-          {{ healthData?.data_directory?.writable ? '可写' : '不可写' }}
+          {{ appStore.healthData?.data_directory?.writable ? '可写' : '不可写' }}
         </p>
       </div>
     </div>
 
     <ErrorState
-      :error="error"
+      :error="appStore.error"
       :show-retry="true"
-      @retry="loadHealth"
+      @retry="appStore.fetchHealth"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { getHealth } from '@/api/health'
-import type { HealthData } from '@/types/api'
+import { onMounted } from 'vue'
+import { useAppStore } from '@/stores/app'
 import ErrorState from '@/components/custom/ErrorState.vue'
 
-const healthData = ref<HealthData | null>(null)
-const error = ref<string | null>(null)
+const appStore = useAppStore()
 
 onMounted(() => {
-  loadHealth()
+  appStore.fetchHealth()
 })
-
-async function loadHealth() {
-  error.value = null
-  try {
-    const res = await getHealth()
-    healthData.value = res.data
-  } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : '无法获取服务状态'
-  }
-}
 </script>

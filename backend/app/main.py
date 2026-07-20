@@ -21,12 +21,13 @@ logger = setup_logger(__name__)
 
 # 标记数据库状态
 _db_ready = False
+_db_migration_completed = False
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
-    global _db_ready
+    global _db_ready, _db_migration_completed
 
     logger.info("服务启动中...")
     logger.info(f"数据目录: {settings.resolved_data_dir}")
@@ -41,15 +42,18 @@ async def lifespan(app: FastAPI):
             db_file_path=settings.db_file_path,
         )
         _db_ready = db_ready
+        _db_migration_completed = db_ready
         db.close()
     except Exception as exc:
         _db_ready = False
+        _db_migration_completed = False
         logger.error(f"数据库初始化失败: {exc}", exc_info=True)
         logger.warning("服务将以数据库不可用状态启动")
 
     yield
 
     _db_ready = False
+    _db_migration_completed = False
     logger.info("服务关闭")
 
 
@@ -94,29 +98,38 @@ from app.api import audit as api_audit
 app.include_router(api_audit.router)
 
 
-# 健康检查
-@app.get("/health")
-async def health():
-    """增强健康检查：返回服务、数据库、数据目录和迁移状态。"""
+def _health_data() -> dict:
+    """返回健康检查数据（供多个路由共享）。"""
     data_dir = settings.resolved_data_dir
     data_dir_writable = _check_dir_writable(data_dir)
     db_file = settings.db_file_path
 
-    return success(
-        data={
-            "status": "running",
-            "service": "AI Companion",
-            "version": "0.1.0",
-            "database": {
-                "ready": _db_ready,
-                "path": db_file,
-            },
-            "data_directory": {
-                "path": data_dir,
-                "writable": data_dir_writable,
-            },
-        }
-    )
+    return {
+        "status": "running",
+        "service": "AI Companion",
+        "version": "0.1.0",
+        "database": {
+            "ready": _db_ready,
+            "migration_completed": _db_migration_completed,
+            "path": db_file,
+        },
+        "data_directory": {
+            "path": data_dir,
+            "writable": data_dir_writable,
+        },
+    }
+
+
+@app.get("/health")
+async def health():
+    """健康检查（浏览器直接访问用）。"""
+    return success(data=_health_data())
+
+
+@app.get("/api/health")
+async def api_health():
+    """健康检查（前端 /api 代理用，与业务路由前缀一致）。"""
+    return success(data=_health_data())
 
 
 def _check_dir_writable(dir_path: str) -> bool:

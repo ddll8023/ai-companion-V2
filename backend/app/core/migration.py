@@ -85,7 +85,14 @@ def ensure_schema(db: Session, base_metadata, db_file_path: str):
 
     # 开发阶段：版本不匹配时重建
     logger.warning(
-        f"数据库版本 v{current_version} 与期望 v{_CURRENT_VERSION} 不匹配，重建表结构"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+    logger.warning(
+        f"数据库版本 v{current_version} 与期望 v{_CURRENT_VERSION} 不匹配"
+    )
+    logger.warning("即将清空全部已有数据并重建表结构！")
+    logger.warning(
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
     base_metadata.drop_all(bind=db.get_bind())
     base_metadata.create_all(bind=db.get_bind())

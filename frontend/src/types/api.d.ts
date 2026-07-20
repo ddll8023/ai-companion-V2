@@ -26,6 +26,7 @@ export interface HealthData {
   version: string
   database: {
     ready: boolean
+    migration_completed: boolean
     path: string
   }
   data_directory: {
