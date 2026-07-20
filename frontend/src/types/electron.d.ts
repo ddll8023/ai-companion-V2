@@ -22,8 +22,6 @@ export interface ElectronAPI {
   getPlatform: () => Promise<string>
   /** 获取应用版本 */
   getAppVersion: () => Promise<string>
-  /** 获取数据目录路径 */
-  getDataDir: () => Promise<string>
 
   // ── 事件监听 ──
   /** 监听后端服务状态变化 */

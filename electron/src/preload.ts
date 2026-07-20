@@ -8,20 +8,7 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
-
-/** IPC 通道名称（与 main.ts 保持一致） */
-const IPC_CHANNELS = {
-  API_GET: 'api:get',
-  API_POST: 'api:post',
-  KEYSTORE_SET: 'keystore:set',
-  KEYSTORE_GET: 'keystore:get',
-  KEYSTORE_DELETE: 'keystore:delete',
-  KEYSTORE_HAS: 'keystore:has',
-  BACKEND_STATUS: 'backend-status',
-  GET_PLATFORM: 'get-platform',
-  GET_APP_VERSION: 'get-app-version',
-  GET_DATA_DIR: 'get-data-dir',
-} as const;
+import { IPC_CHANNELS } from './constants/channels';
 
 /**
  * 受控白名单 API。
@@ -62,10 +49,6 @@ const api = {
   /** 获取应用版本 */
   getAppVersion: (): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
-
-  /** 获取数据目录路径 */
-  getDataDir: (): Promise<string> =>
-    ipcRenderer.invoke(IPC_CHANNELS.GET_DATA_DIR),
 
   // ── 事件监听 ────────────────────────────────────────────
   /** 监听后端服务状态变化 */

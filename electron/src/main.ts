@@ -18,6 +18,8 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as net from 'net';
 import * as crypto from 'crypto';
+import * as http from 'http';
+import { IPC_CHANNELS } from './constants/channels';
 
 // ── 常量 ──────────────────────────────────────────────────────────────
 
@@ -37,19 +39,7 @@ const DATA_DIR = path.join(app.getPath('userData'), 'data');
 /** 安全存储文件路径 */
 const SECURE_STORE_PATH = path.join(app.getPath('userData'), 'secure-store.enc');
 
-/** IPC 通道名称 */
-const IPC_CHANNELS = {
-  API_GET: 'api:get',
-  API_POST: 'api:post',
-  KEYSTORE_SET: 'keystore:set',
-  KEYSTORE_GET: 'keystore:get',
-  KEYSTORE_DELETE: 'keystore:delete',
-  KEYSTORE_HAS: 'keystore:has',
-  BACKEND_STATUS: 'backend-status',
-  GET_PLATFORM: 'get-platform',
-  GET_APP_VERSION: 'get-app-version',
-  GET_DATA_DIR: 'get-data-dir',
-} as const;
+// IPC_CHANNELS 定义在 src/constants/channels.ts 中，两处共享
 
 // ── 全局状态 ─────────────────────────────────────────────────────────
 
@@ -131,7 +121,6 @@ function buildRequestOptions(
 /** 发送 HTTP 请求到本地 Python 服务 */
 function apiRequest(method: string, urlPath: string, body?: unknown): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    const http = require('http');
     const opts = buildRequestOptions(method, urlPath, body);
 
     const req = http.request(
@@ -261,7 +250,6 @@ async function waitForBackendHealth(maxRetries = 60, interval = 1000): Promise<v
   for (let i = 0; i < maxRetries; i++) {
     if (isQuitting) return;
     try {
-      const http = require('http');
       const result = await new Promise<boolean>((resolve) => {
         const req = http.get(
           `http://127.0.0.1:${backendPort}/health`,
@@ -306,7 +294,6 @@ function startHealthCheck(): void {
   healthCheckTimer = setInterval(async () => {
     if (isQuitting) return;
     try {
-      const http = require('http');
       const result = await new Promise<boolean>((resolve) => {
         const req = http.get(
           `http://127.0.0.1:${backendPort}/health`,
@@ -376,7 +363,7 @@ function loadSecureStore(): Record<string, string> {
       try {
         store[key] = safeStorage.decryptString(Buffer.from(encryptedHex, 'hex'));
       } catch {
-        // 略过无法解密的值
+        console.warn(`[Main] 安全存储: 密钥 "${key}" 解密失败，已跳过（系统加密环境可能已变更）`);
       }
     }
     return store;
@@ -466,11 +453,6 @@ function setupIpcHandlers(): void {
   ipcMain.handle(IPC_CHANNELS.GET_APP_VERSION, () => {
     return app.getVersion();
   });
-
-  // 获取数据目录路径
-  ipcMain.handle(IPC_CHANNELS.GET_DATA_DIR, () => {
-    return DATA_DIR;
-  });
 }
 
 // ── 窗口管理 ─────────────────────────────────────────────────────────
@@ -552,5 +534,10 @@ app.on('before-quit', () => {
 });
 
 app.on('will-quit', () => {
-  stopPythonBackend();
+  // 只清理定时器和引用，实际的 kill 操作已在 before-quit 中完成
+  if (healthCheckTimer) {
+    clearInterval(healthCheckTimer);
+    healthCheckTimer = null;
+  }
+  pythonProcess = null;
 });

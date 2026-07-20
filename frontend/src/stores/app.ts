@@ -21,7 +21,7 @@ export const useAppStore = defineStore('app', () => {
     error.value = null
     try {
       const api = useApi()
-      const res = await api.get<HealthData>('/api/health')
+      const res = await api.get<HealthData>('/health')
       healthData.value = res.data
       backendReady.value = res.data.status === 'running'
     } catch (e: unknown) {
