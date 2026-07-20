@@ -98,6 +98,28 @@ from app.api import audit as api_audit
 app.include_router(api_audit.router)
 
 
+# ── 认证中间件（Electron 安全通信） ──────────────────────────────
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """验证请求认证令牌。
+
+    健康检查路由 /health 不要求认证（用于启动检测）。
+    当 AUTH_TOKEN 为空时跳过认证（浏览器开发模式）。
+    """
+    if request.url.path in ("/health", "/api/health", "/docs", "/openapi.json"):
+        return await call_next(request)
+
+    if settings.AUTH_TOKEN:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer ") or auth_header[7:] != settings.AUTH_TOKEN:
+            return JSONResponse(
+                status_code=401,
+                content=error(code=ErrorCode.PERMISSION_DENIED, message="认证失败"),
+            )
+
+    return await call_next(request)
+
+
 def _health_data() -> dict:
     """返回健康检查数据（供多个路由共享）。"""
     data_dir = settings.resolved_data_dir

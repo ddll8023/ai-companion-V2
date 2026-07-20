@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # 日志级别
     LOG_LEVEL: str = "INFO"
 
+    # 认证令牌（Electron 环境由主进程传入，浏览器开发模式为空字符串则跳过认证）
+    AUTH_TOKEN: str = ""
+
     # CORS 配置（JSON 数组字符串）
     CORS_ORIGINS: str = '["http://127.0.0.1:9753","http://localhost:9753"]'
 

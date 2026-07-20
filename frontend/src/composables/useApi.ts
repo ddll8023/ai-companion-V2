@@ -1,10 +1,11 @@
 /**
  * 统一通信抽象层。
  *
- * 浏览器开发环境：使用 HTTP 适配器
- * Electron 正式环境：使用 IPC 适配器
+ * 浏览器开发环境：使用 HTTP 适配器（Axios）
+ * Electron 正式环境：使用 IPC 适配器（通过 preload 桥接）
  *
  * 页面和 Store 使用统一业务接口，不感知通信差异。
+ * 环境判断集中在通信层，不在页面中散落 window.electronAPI 判断。
  */
 
 import type { ApiResponse } from '@/types/api'
@@ -25,30 +26,30 @@ const httpAdapter: CommunicationAdapter = {
   post: <T>(url: string, data?: unknown) => request.post<ApiResponse<T>>(url, data),
 }
 
-/** IPC 适配器（Electron 正式环境） - 占位实现，后续阶段完善 */
+/** IPC 适配器（Electron 正式环境） */
 const ipcAdapter: CommunicationAdapter = {
-  get: <T>(url: string) => {
-    // TODO 阶段 3：通过 IPC 转发请求
-    return Promise.reject(new Error('IPC 适配器尚未实现'))
+  get: async <T>(url: string) => {
+    const result = await window.electronAPI!.apiGet<T>(url)
+    if (result.code !== 0) {
+      throw new Error(result.message || '请求失败')
+    }
+    return result as unknown as ApiResponse<T>
   },
-  post: <T>(url: string, data?: unknown) => {
-    // TODO 阶段 3：通过 IPC 转发请求
-    return Promise.reject(new Error('IPC 适配器尚未实现'))
+  post: async <T>(url: string, data?: unknown) => {
+    const result = await window.electronAPI!.apiPost<T>(url, data)
+    if (result.code !== 0) {
+      throw new Error(result.message || '请求失败')
+    }
+    return result as unknown as ApiResponse<T>
   },
 }
 
-/**
- * 检测当前运行环境。
- * 通过 window.electronAPI 的存在判断。
- */
+/** 检测当前运行环境 */
 function detectRuntime(): RuntimeEnv {
   return typeof window !== 'undefined' && window.electronAPI ? 'electron' : 'browser'
 }
 
-/**
- * 获取当前环境的通信适配器。
- * 环境判断集中在通信层，不在页面中散落 window.electronAPI 判断。
- */
+/** 获取当前环境的通信适配器 */
 function getAdapter(): CommunicationAdapter {
   return detectRuntime() === 'electron' ? ipcAdapter : httpAdapter
 }

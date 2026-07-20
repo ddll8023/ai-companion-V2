@@ -8,6 +8,12 @@
     <!-- 应用标题 -->
     <div class="h-14 flex items-center px-5 border-b border-border">
       <h1 class="text-base font-semibold text-text">AI Companion</h1>
+      <!-- 后端状态指示灯 -->
+      <span
+        class="ml-3 inline-block w-2 h-2 rounded-full"
+        :class="appStore.backendReady ? 'bg-success' : 'bg-error'"
+        :title="appStore.backendReady ? '服务运行中' : '服务不可用'"
+      />
     </div>
 
     <!-- 导航菜单 -->
@@ -32,8 +38,17 @@
       </router-link>
     </nav>
 
-    <!-- 底部版本信息 -->
-    <div class="px-5 py-3 border-t border-border">
+    <!-- 底部：后端状态 + 版本信息 -->
+    <div class="px-5 py-3 border-t border-border space-y-1">
+      <div class="flex items-center gap-2 text-xs">
+        <span
+          class="inline-block w-1.5 h-1.5 rounded-full"
+          :class="appStore.backendReady ? 'bg-success' : 'bg-error'"
+        />
+        <span class="text-text-tertiary">
+          {{ appStore.backendReady ? '服务运行中' : '服务不可用' }}
+        </span>
+      </div>
       <span class="text-xs text-text-tertiary">v0.1.0</span>
     </div>
   </aside>
@@ -41,8 +56,10 @@
 
 <script setup lang="ts">
 import { useRoute } from 'vue-router'
+import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
+const appStore = useAppStore()
 
 interface NavItem {
   path: string

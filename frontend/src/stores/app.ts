@@ -1,7 +1,12 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import { getHealth } from '@/api/health'
+import { useApi } from '@/composables/useApi'
 import type { HealthData } from '@/types/api'
+
+/** IPC 后端状态事件类型 */
+interface BackendStatusEvent {
+  ready: boolean
+}
 
 /** 应用状态 Store */
 export const useAppStore = defineStore('app', () => {
@@ -15,7 +20,8 @@ export const useAppStore = defineStore('app', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await getHealth()
+      const api = useApi()
+      const res = await api.get<HealthData>('/api/health')
       healthData.value = res.data
       backendReady.value = res.data.status === 'running'
     } catch (e: unknown) {
@@ -26,11 +32,24 @@ export const useAppStore = defineStore('app', () => {
     }
   }
 
+  /** 由 IPC 事件通知更新后端状态（Electron 模式） */
+  function updateBackendStatus(status: BackendStatusEvent) {
+    backendReady.value = status.ready
+    if (!status.ready) {
+      error.value = '本地服务不可用'
+    } else {
+      error.value = null
+      // 服务恢复时自动刷新完整健康状态
+      fetchHealth()
+    }
+  }
+
   return {
     healthData,
     backendReady,
     loading,
     error,
     fetchHealth,
+    updateBackendStatus,
   }
 })
