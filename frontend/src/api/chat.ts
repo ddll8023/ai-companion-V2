@@ -42,19 +42,27 @@ export async function getMessages(sessionId: number) {
 /**
  * 发送消息并通过 SSE 接收流式回复。
  * 浏览器模式使用 fetch，Electron 模式暂不支持流式。
+ *
+ * @param configId 模型配置 ID，用于通过通信适配器获取 API Key
+ * @param signal 可选 AbortSignal，用于主动中止请求
  */
 export async function streamChat(
   sessionId: number,
   content: string,
-  apiKey: string | undefined,
+  configId: number,
   onEvent: (event: ChatStreamEvent) => void,
   onError: (error: Error) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
+  // 通过通信适配器获取 API Key（页面不感知获取方式）
+  const apiKey = await adapter.resolveApiKey(configId)
+
   try {
     const response = await fetch(`/api/v1/chat/sessions/${sessionId}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, api_key: apiKey }),
+      body: JSON.stringify({ content, api_key: apiKey || undefined }),
+      signal,
     })
 
     if (!response.ok) {
@@ -103,6 +111,10 @@ export async function streamChat(
       }
     }
   } catch (e) {
+    // 用户主动中止（AbortController）不触发错误回调
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      return
+    }
     onError(e instanceof Error ? e : new Error(String(e)))
   }
 }

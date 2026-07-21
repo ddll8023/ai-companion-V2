@@ -20,6 +20,15 @@ export interface CommunicationAdapter {
   post: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
   put: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
   delete: <T>(url: string) => Promise<ApiResponse<T>>
+
+  /** 获取模型 API Key（Electron 模式从 keystore 获取，浏览器模式返回 undefined） */
+  resolveApiKey: (configId: number) => Promise<string | undefined>
+
+  /** 保存模型 API Key（Electron 模式写入 keystore，浏览器模式返回 false） */
+  saveApiKey: (configId: number, apiKey: string) => Promise<boolean>
+
+  /** 删除模型 API Key（Electron 模式从 keystore 删除，浏览器模式返回 false） */
+  deleteApiKey: (configId: number) => Promise<boolean>
 }
 
 /** 从 AxiosResponse 中提取 ApiResponse */
@@ -33,6 +42,21 @@ const httpAdapter: CommunicationAdapter = {
   post: <T>(url: string, data?: unknown) => extractData(request.post<ApiResponse<T>>(url, data)),
   put: <T>(url: string, data?: unknown) => extractData(request.put<ApiResponse<T>>(url, data)),
   delete: <T>(url: string) => extractData(request.delete<ApiResponse<T>>(url)),
+
+  resolveApiKey: async (_configId: number) => {
+    // 浏览器模式：无法从安全存储获取，返回 undefined
+    return undefined
+  },
+
+  saveApiKey: async (_configId: number, _apiKey: string) => {
+    // 浏览器模式：不支持安全存储，返回 false
+    return false
+  },
+
+  deleteApiKey: async (_configId: number) => {
+    // 浏览器模式：不支持安全存储，返回 false
+    return false
+  },
 }
 
 /** IPC 适配器（Electron 正式环境） */
@@ -64,6 +88,33 @@ const ipcAdapter: CommunicationAdapter = {
       throw new Error(result.message || '请求失败')
     }
     return result as unknown as ApiResponse<T>
+  },
+
+  resolveApiKey: async (configId: number) => {
+    try {
+      const result = await window.electronAPI!.keystoreGet(`model_key_${configId}`)
+      return result.success ? result.value ?? undefined : undefined
+    } catch {
+      return undefined
+    }
+  },
+
+  saveApiKey: async (configId: number, apiKey: string) => {
+    try {
+      const result = await window.electronAPI!.keystoreSet(`model_key_${configId}`, apiKey)
+      return result.success
+    } catch {
+      return false
+    }
+  },
+
+  deleteApiKey: async (configId: number) => {
+    try {
+      await window.electronAPI!.keystoreDelete(`model_key_${configId}`)
+      return true
+    } catch {
+      return false
+    }
   },
 }
 

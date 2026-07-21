@@ -188,6 +188,17 @@ def chat_stream(
     # 验证会话存在
     session = _get_session_or_error(db, session_id)
 
+    # 检查并发：同一会话同一时间只允许一个生成任务
+    existing_generating = db.scalar(
+        select(Message).where(
+            Message.session_id == session_id,
+            Message.status == "generating",
+        ).limit(1)
+    )
+    if existing_generating is not None:
+        yield {"type": "error", "message": "当前会话已有正在生成的回复，请等待完成或中止后重试"}
+        return
+
     # 保存用户消息
     user_msg = _save_user_message(db, session_id, user_content)
     yield {"type": "user_saved", "message_id": user_msg.id}
@@ -241,6 +252,15 @@ def chat_stream(
         # 完成
         _complete_assistant_message(db, assistant_msg.id, collected_content)
         yield {"type": "done", "message_id": assistant_msg.id}
+
+    except GeneratorExit:
+        # 客户端断开连接 → 中止生成
+        logger.warning(f"客户端断开连接，生成中止: session_id={session_id}")
+        if collected_content:
+            _abort_assistant_message(db, assistant_msg.id, collected_content)
+        else:
+            _fail_assistant_message(db, assistant_msg.id, "用户中止")
+        raise
 
     except ServiceException as e:
         if collected_content:

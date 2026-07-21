@@ -295,9 +295,12 @@
 import { onMounted, ref, computed } from 'vue'
 import type { ModelConfig, ModelConfigCreate, ModelConfigUpdate } from '@/types/api'
 import * as modelApi from '@/api/model'
+import { getAdapter } from '@/composables/useApi'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
+
+const adapter = getAdapter()
 
 // ── 供应商列表 ──
 const providers = ref<Record<string, string>>({})
@@ -414,10 +417,8 @@ async function saveConfig() {
 async function deleteConfig(config: ModelConfig) {
   if (!confirm(`确定删除配置「${config.name}」吗？`)) return
   try {
-    // 先清理安全存储中的密钥
-    if (window.electronAPI) {
-      await window.electronAPI.keystoreDelete(`model_key_${config.id}`)
-    }
+    // 通过通信适配器清理安全存储中的密钥（页面不感知获取方式）
+    await adapter.deleteApiKey(config.id)
     // 再删除配置记录
     await modelApi.deleteConfig(config.id)
     await fetchConfigs()
@@ -455,16 +456,11 @@ async function saveKey() {
   keySaving.value = true
   keyError.value = null
   try {
-    // Electron 模式：保存到 keystore
-    if (window.electronAPI) {
-      const result = await window.electronAPI.keystoreSet(
-        `model_key_${keyDialogConfig.value.id}`,
-        keyInput.value,
-      )
-      if (!result.success) {
-        keyError.value = result.error || '保存密钥失败'
-        return
-      }
+    // 通过通信适配器保存密钥（Electron 模式写入 keystore）
+    const saved = await adapter.saveApiKey(keyDialogConfig.value.id, keyInput.value)
+    if (!saved) {
+      keyError.value = '保存密钥失败'
+      return
     }
     // 更新 has_key 状态（所有环境）
     await modelApi.updateConfig(keyDialogConfig.value.id, { has_key: true })
@@ -483,12 +479,12 @@ async function testConnection(config: ModelConfig) {
   testLoading.value = false
   testMessage.value = ''
 
-  // 先尝试从 keystore 获取密钥（Electron 模式）
-  if (config.has_key && window.electronAPI) {
+  // 通过通信适配器从安全存储获取密钥（Electron 模式）
+  if (config.has_key) {
     try {
-      const result = await window.electronAPI.keystoreGet(`model_key_${config.id}`)
-      if (result.success && result.value) {
-        await doTest(config.id, result.value)
+      const apiKey = await adapter.resolveApiKey(config.id)
+      if (apiKey) {
+        await doTest(config.id, apiKey)
         return
       }
       // 密钥已丢失（如用户在系统 keychain 中手动清除）

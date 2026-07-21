@@ -354,27 +354,16 @@ async function handleSend() {
   isGenerating.value = true
   streamingContent.value = ''
 
-  // 获取 API Key（浏览器模式直接使用空字符串让后端处理）
-  let apiKey: string | undefined
-
-  if (window.electronAPI && activeConfig.value) {
-    // Electron 模式：从 keystore 获取
-    try {
-      const result = await window.electronAPI.keystoreGet(`model_key_${activeConfig.value.id}`)
-      if (result.success && result.value) {
-        apiKey = result.value
-      }
-    } catch {
-      apiKey = undefined
-    }
-  }
+  // 创建 AbortController 用于中止
+  abortController.value = new AbortController()
 
   await chatApi.streamChat(
     currentSessionId.value,
     content,
-    apiKey,
+    activeConfig.value?.id || 0,
     handleStreamEvent,
     handleStreamError,
+    abortController.value.signal,
   )
 }
 
@@ -446,8 +435,10 @@ function handleStreamError(err: Error) {
 }
 
 function handleStop() {
-  // 中止通过标志来控制：在 chat_stream 的 generator 中没有中断机制
-  // 关闭生成状态，用户标识中止
+  // 中止 SSE 连接 → 触发后端 GeneratorExit → 后端标记为 aborted
+  abortController.value?.abort()
+
+  // 已有流式内容作为已中止消息保留
   if (streamingContent.value) {
     const partialMessage: Message = {
       id: Date.now(),
@@ -464,7 +455,7 @@ function handleStop() {
   }
   streamingContent.value = ''
   isGenerating.value = false
-  errorMessage.value = '已中止'
+  errorMessage.value = null
   focusInput()
 }
 
