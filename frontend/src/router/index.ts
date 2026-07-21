@@ -12,7 +12,7 @@ const routes: RouteRecordRaw[] = [
     path: '/chat',
     name: 'Chat',
     meta: { title: '对话', icon: 'comments' },
-    component: () => import('@/pages/PlaceholderPage.vue'),
+    component: () => import('@/pages/Chat.vue'),
   },
   {
     path: '/memories',

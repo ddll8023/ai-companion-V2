@@ -10,6 +10,9 @@ API Key 不存储在 SQLite。密钥由 Electron 安全存储管理，前端通�
 
 from __future__ import annotations
 
+import json
+from typing import Generator
+
 import httpx
 from sqlalchemy import select, desc, update as sa_update
 from sqlalchemy.orm import Session
@@ -216,6 +219,165 @@ def _get_config_or_error(db: Session, config_id: int) -> ModelConfig:
     if config is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"模型配置不存在: {config_id}")
     return config
+
+
+def _get_active_config(db: Session) -> ModelConfig:
+    """获取当前激活的配置，不存在时抛出异常。"""
+    config = db.scalar(
+        select(ModelConfig).where(ModelConfig.is_active == 1).limit(1)
+    )
+    if config is None:
+        raise ServiceException(ErrorCode.MODEL_CONFIG_ERROR, "未配置模型，请在设置中完成模型配置")
+    if not config.has_key:
+        raise ServiceException(ErrorCode.MODEL_CONFIG_ERROR, "当前模型尚未配置 API Key")
+    return config
+
+
+# ── 流式对话 ────────────────────────────────────────────────────────────────
+
+
+def chat_stream(
+    provider: str,
+    model_name: str,
+    api_key: str,
+    api_base: str | None,
+    messages: list[dict[str, str]],
+    system_prompt: str | None = None,
+) -> Generator[str, None, None]:
+    """流式对话，逐 token 生成回复内容。
+
+    Args:
+        provider: 模型供应商
+        model_name: 模型名称
+        api_key: API Key
+        api_base: API 地址
+        messages: 历史消息列表，格式 [{"role": "user", "content": "..."}, ...]
+        system_prompt: 系统提示词（可选）
+
+    Yields:
+        每次生成一个 token 文本片段
+    """
+    if provider in ("openai", "openai-compatible"):
+        yield from _chat_stream_openai(model_name, api_key, api_base, messages, system_prompt)
+    elif provider == "anthropic":
+        yield from _chat_stream_anthropic(model_name, api_key, api_base, messages, system_prompt)
+    else:
+        raise ServiceException(ErrorCode.MODEL_CONFIG_ERROR, f"不支持的供应商类型: {provider}")
+
+
+def _chat_stream_openai(
+    model_name: str,
+    api_key: str,
+    api_base: str | None,
+    messages: list[dict[str, str]],
+    system_prompt: str | None = None,
+) -> Generator[str, None, None]:
+    """OpenAI 兼容格式流式对话。"""
+    base_url = (api_base or "https://api.openai.com/v1").rstrip("/")
+    url = f"{base_url}/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    payload_messages = []
+    if system_prompt:
+        payload_messages.append({"role": "system", "content": system_prompt})
+    payload_messages.extend(messages)
+
+    payload = {
+        "model": model_name,
+        "messages": payload_messages,
+        "stream": True,
+    }
+
+    with httpx.Client(timeout=120) as client:
+        with client.stream("POST", url, json=payload, headers=headers) as response:
+            if response.status_code != 200:
+                err_msg = _extract_error(response)
+                raise ServiceException(ErrorCode.AI_SERVICE_ERROR, f"模型调用失败: {err_msg}")
+
+            for line in response.iter_lines():
+                if not line or not line.startswith("data: "):
+                    continue
+                data_str = line[6:]
+                if data_str == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(data_str)
+                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    content = delta.get("content", "")
+                    if content:
+                        yield content
+                except json.JSONDecodeError:
+                    logger.warning(f"解析流式响应失败: {data_str[:100]}")
+                    continue
+
+
+def _chat_stream_anthropic(
+    model_name: str,
+    api_key: str,
+    api_base: str | None,
+    messages: list[dict[str, str]],
+    system_prompt: str | None = None,
+) -> Generator[str, None, None]:
+    """Anthropic 格式流式对话。"""
+    base_url = (api_base or "https://api.anthropic.com/v1").rstrip("/")
+    url = f"{base_url}/messages"
+
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+
+    # Anthropic 的 system prompt 是顶层参数，不在 messages 数组中
+    payload_messages = [m for m in messages if m["role"] != "system"]
+
+    payload: dict = {
+        "model": model_name,
+        "max_tokens": 4096,
+        "messages": payload_messages,
+        "stream": True,
+    }
+    if system_prompt:
+        payload["system"] = system_prompt
+
+    with httpx.Client(timeout=120) as client:
+        with client.stream("POST", url, json=payload, headers=headers) as response:
+            if response.status_code != 200:
+                err_msg = _extract_error(response)
+                raise ServiceException(ErrorCode.AI_SERVICE_ERROR, f"模型调用失败: {err_msg}")
+
+            for line in response.iter_lines():
+                if line.startswith("data: "):
+                    data_str = line[6:]
+                    try:
+                        event = json.loads(data_str)
+                        if event.get("type") == "content_block_delta":
+                            delta = event.get("delta", {})
+                            if delta.get("type") == "text_delta":
+                                content = delta.get("text", "")
+                                if content:
+                                    yield content
+                    except json.JSONDecodeError:
+                        logger.warning(f"解析 Anthropic 流式响应失败: {data_str[:100]}")
+                        continue
+
+
+def _extract_error(response: httpx.Response) -> str:
+    """从模型 API 错误响应中提取错误消息。"""
+    try:
+        body = response.json()
+        if "error" in body:
+            err = body["error"]
+            if isinstance(err, dict):
+                return err.get("message", str(response.status_code))
+            return str(err)
+        return str(response.status_code)
+    except Exception:
+        return f"HTTP {response.status_code}"
 
 
 def _do_test(

@@ -1,0 +1,287 @@
+"""对话服务。
+
+职责：
+- 会话 CRUD
+- 消息管理
+- 流式对话编排
+
+安全约束：
+- API Key 仅在请求时传入，不持久化
+- 日志中不记录完整消息正文
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any, Generator
+
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session
+
+from app.core.database import commit_or_rollback
+from app.models.chat import ChatSession, Message
+from app.schemas.chat import MessageResponse, SessionCreate, SessionResponse, SessionUpdate
+from app.schemas.common import ErrorCode
+from app.services import model_provider
+from app.services.audit import record_audit
+from app.utils.exception import ServiceException
+from app.utils.logger_config import setup_logger
+
+logger = setup_logger(__name__)
+
+DEFAULT_TITLE = "新对话"
+_DEFAULT_SYSTEM_PROMPT = "你是一个有用的 AI 助手。请使用中文回复用户，除非用户使用其他语言提问。"
+
+
+# ── 会话 CRUD ──────────────────────────────────────────────────────────────
+
+
+def create_session(db: Session, data: SessionCreate | None = None) -> SessionResponse:
+    """创建新会话。"""
+    session = ChatSession(title=data.title if data and data.title else DEFAULT_TITLE)
+    db.add(session)
+    commit_or_rollback(db)
+    logger.info(f"创建会话: id={session.id}")
+    return SessionResponse.model_validate(session)
+
+
+def list_sessions(db: Session) -> list[SessionResponse]:
+    """获取全部会话列表（按更新时间倒序）。"""
+    items = db.scalars(
+        select(ChatSession).order_by(desc(ChatSession.updated_at))
+    ).all()
+    return [SessionResponse.model_validate(item) for item in items]
+
+
+def get_session(db: Session, session_id: int) -> SessionResponse:
+    """获取单个会话详情。"""
+    session = _get_session_or_error(db, session_id)
+    return SessionResponse.model_validate(session)
+
+
+def update_session(db: Session, session_id: int, data: SessionUpdate) -> SessionResponse:
+    """更新会话（重命名等）。"""
+    session = _get_session_or_error(db, session_id)
+    session.title = data.title
+    commit_or_rollback(db)
+    logger.info(f"更新会话: id={session_id}")
+    return SessionResponse.model_validate(session)
+
+
+def delete_session(db: Session, session_id: int) -> None:
+    """删除会话及其关联的消息（CASCADE）。"""
+    session = _get_session_or_error(db, session_id)
+    db.delete(session)
+    commit_or_rollback(db)
+    logger.info(f"删除会话: id={session_id}")
+
+    record_audit(
+        db=db,
+        action="chat.session.delete",
+        target_type="session",
+        target_id=session_id,
+        summary=f"删除会话: {session.title}",
+    )
+
+
+# ── 消息管理 ────────────────────────────────────────────────────────────────
+
+
+def get_messages(db: Session, session_id: int) -> list[MessageResponse]:
+    """获取指定会话的全部消息（按创建时间正序）。"""
+    # 先验证会话存在
+    _get_session_or_error(db, session_id)
+
+    items = db.scalars(
+        select(Message)
+        .where(Message.session_id == session_id)
+        .order_by(Message.id)
+    ).all()
+    return [MessageResponse.model_validate(item) for item in items]
+
+
+def _save_user_message(db: Session, session_id: int, content: str) -> Message:
+    """保存用户消息。"""
+    msg = Message(
+        session_id=session_id,
+        role="user",
+        content=content,
+        status="completed",
+    )
+    db.add(msg)
+    commit_or_rollback(db)
+    return msg
+
+
+def _create_assistant_placeholder(
+    db: Session,
+    session_id: int,
+    model_name: str | None,
+) -> Message:
+    """创建助手占位消息（初始状态为 generating）。"""
+    msg = Message(
+        session_id=session_id,
+        role="assistant",
+        content="",
+        status="generating",
+        model_name=model_name,
+    )
+    db.add(msg)
+    commit_or_rollback(db)
+    return msg
+
+
+def _complete_assistant_message(db: Session, message_id: int, content: str) -> None:
+    """助手消息完成，保存完整内容并更新状态。"""
+    msg = db.get(Message, message_id)
+    if msg is None:
+        logger.warning(f"助手消息不存在: id={message_id}")
+        return
+    msg.content = content
+    msg.status = "completed"
+    commit_or_rollback(db)
+
+
+def _abort_assistant_message(db: Session, message_id: int, content: str) -> None:
+    """中止助手消息，保存已生成内容并标记为已中止。"""
+    msg = db.get(Message, message_id)
+    if msg is None:
+        return
+    msg.content = content
+    msg.status = "aborted"
+    commit_or_rollback(db)
+
+
+def _fail_assistant_message(db: Session, message_id: int, error_message: str) -> None:
+    """助手消息失败，标记状态。"""
+    msg = db.get(Message, message_id)
+    if msg is None:
+        return
+    msg.status = "failed"
+    msg.error_message = error_message[:256]
+    commit_or_rollback(db)
+
+
+# ── 流式对话编排 ────────────────────────────────────────────────────────────
+
+
+def chat_stream(
+    db: Session,
+    session_id: int,
+    user_content: str,
+    api_key: str | None,
+) -> Generator[dict[str, Any], None, None]:
+    """流式对话编排。
+
+    Args:
+        db: 数据库会话
+        session_id: 会话 ID
+        user_content: 用户消息内容
+        api_key: API Key（浏览器模式需要传入，Electron 模式从 keystore 获取）
+
+    Yields:
+        流式事件字典:
+        - {"type": "token", "content": "..."} — 内容 token
+        - {"type": "done", "message_id": 123} — 完成
+        - {"type": "error", "message": "..."} — 错误
+    """
+    # 验证会话存在
+    session = _get_session_or_error(db, session_id)
+
+    # 保存用户消息
+    user_msg = _save_user_message(db, session_id, user_content)
+    yield {"type": "user_saved", "message_id": user_msg.id}
+
+    # 获取激活的模型配置
+    try:
+        active_config = model_provider.get_active_config(db)
+        if active_config is None:
+            raise ServiceException(ErrorCode.MODEL_CONFIG_ERROR, "未配置模型，请在设置中完成模型配置")
+    except ServiceException as e:
+        yield {"type": "error", "message": e.message}
+        return
+
+    # 获取 API Key
+    resolved_key = api_key
+    if not resolved_key:
+        # 尝试从 keystore 获取（仅 Electron 模式）
+        # 浏览器模式必须传入 api_key
+        yield {"type": "error", "message": "缺少 API Key"}
+        return
+
+    # 创建助手占位消息
+    assistant_msg = _create_assistant_placeholder(db, session_id, active_config.model_name)
+
+    # 获取历史消息
+    history_messages = get_messages(db, session_id)
+
+    # 构造模型调用消息列表（排除当前助手的占位消息）
+    model_messages = []
+    for msg in history_messages:
+        m: dict[str, str] = {"role": msg.role, "content": msg.content}
+        model_messages.append(m)
+
+    # 尝试自动更新会话标题（首次对话时）
+    _try_auto_title(db, session_id, user_content, history_messages)
+
+    # 执行流式调用
+    collected_content = ""
+    try:
+        for token in model_provider.chat_stream(
+            provider=active_config.provider,
+            model_name=active_config.model_name,
+            api_key=resolved_key,
+            api_base=active_config.api_base,
+            messages=model_messages[:-1],  # 去掉占位消息
+            system_prompt=_DEFAULT_SYSTEM_PROMPT,
+        ):
+            collected_content += token
+            yield {"type": "token", "content": token}
+
+        # 完成
+        _complete_assistant_message(db, assistant_msg.id, collected_content)
+        yield {"type": "done", "message_id": assistant_msg.id}
+
+    except ServiceException as e:
+        if collected_content:
+            _abort_assistant_message(db, assistant_msg.id, collected_content)
+        else:
+            _fail_assistant_message(db, assistant_msg.id, e.message)
+        yield {"type": "error", "message": e.message}
+    except Exception as e:
+        logger.error(f"对话流式调用异常: {e}", exc_info=True)
+        if collected_content:
+            _abort_assistant_message(db, assistant_msg.id, collected_content)
+        else:
+            _fail_assistant_message(db, assistant_msg.id, str(e))
+        yield {"type": "error", "message": f"对话生成失败: {e!s}"}
+
+
+def _try_auto_title(
+    db: Session,
+    session_id: int,
+    user_content: str,
+    history: list[MessageResponse],
+) -> None:
+    """首次对话时自动设置会话标题（使用用户消息前 N 字）。"""
+    session = _get_session_or_error(db, session_id)
+
+    # 只有标题为默认值时且这是第一条用户消息时才设置
+    if session.title == DEFAULT_TITLE and len([m for m in history if m.role == "user"]) <= 1:
+        # 使用用户消息的前 30 个字符作为标题
+        new_title = user_content[:30]
+        if len(user_content) > 30:
+            new_title += "…"
+        session.title = new_title
+        commit_or_rollback(db)
+
+
+# ── 内部方法 ────────────────────────────────────────────────────────────────
+
+
+def _get_session_or_error(db: Session, session_id: int) -> ChatSession:
+    """获取会话，不存在时抛出异常。"""
+    session = db.get(ChatSession, session_id)
+    if session is None:
+        raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"会话不存在: {session_id}")
+    return session

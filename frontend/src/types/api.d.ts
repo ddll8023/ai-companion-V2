@@ -71,3 +71,67 @@ export interface ModelConfigUpdate {
   api_base?: string
   has_key?: boolean
 }
+
+// ── 对话类型 ──────────────────────────────────────────────────────────────
+
+/** 会话 */
+export interface Session {
+  id: number
+  title: string
+  model_name: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 创建会话请求 */
+export interface SessionCreate {
+  title?: string
+}
+
+/** 更新会话请求 */
+export interface SessionUpdate {
+  title: string
+}
+
+/** 消息 */
+export interface Message {
+  id: number
+  session_id: number
+  role: 'user' | 'assistant' | 'system'
+  content: string
+  status: 'generating' | 'completed' | 'aborted' | 'failed'
+  error_message: string | null
+  model_name: string | null
+  token_count: number | null
+  created_at: string | null
+}
+
+/** 发送消息请求 */
+export interface ChatRequest {
+  content: string
+  api_key?: string
+}
+
+/** 流式对话事件 */
+export interface ChatStreamEvent {
+  type: 'token' | 'done' | 'error' | 'user_saved'
+  content?: string
+  message_id?: number
+  message?: string
+}
+
+/** Electron API 接口 */
+export interface ElectronAPI {
+  apiGet: <T>(url: string) => Promise<ApiResponse<T>>
+  apiPost: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
+  apiPut: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
+  apiDelete: <T>(url: string) => Promise<ApiResponse<T>>
+  keystoreSet: (key: string, value: string) => Promise<{ success: boolean; error?: string }>
+  keystoreGet: (key: string) => Promise<{ success: boolean; value: string | null }>
+  keystoreDelete: (key: string) => Promise<{ success: boolean }>
+  keystoreHas: (key: string) => Promise<{ success: boolean; has: boolean }>
+  getPlatform: () => Promise<string>
+  getAppVersion: () => Promise<string>
+  onBackendStatus: (callback: (status: { ready: boolean }) => void) => void
+  removeBackendStatusListener: () => void
+}
