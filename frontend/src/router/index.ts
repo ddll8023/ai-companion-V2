@@ -35,8 +35,8 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/settings',
     name: 'Settings',
-    meta: { title: '设置', icon: 'gear' },
-    component: () => import('@/pages/PlaceholderPage.vue'),
+    meta: { title: '模型设置', icon: 'gear' },
+    component: () => import('@/pages/SettingsModel.vue'),
   },
 ]
 

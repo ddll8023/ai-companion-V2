@@ -21,14 +21,14 @@ request.interceptors.request.use(
   (error) => Promise.reject(error),
 )
 
-// 响应拦截器
+// 响应拦截器：统一错误处理，仍返回完整 AxiosResponse
 request.interceptors.response.use(
   (response: AxiosResponse<ApiResponse>) => {
     const { data } = response
-    if (data.code === 0) {
-      return data
+    if (data.code !== 0) {
+      return Promise.reject(new Error(data.message || '请求失败'))
     }
-    return Promise.reject(new Error(data.message || '请求失败'))
+    return response
   },
   (error) => {
     if (error.code === 'ERR_NETWORK') {

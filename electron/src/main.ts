@@ -413,6 +413,22 @@ function setupIpcHandlers(): void {
     return apiRequest('POST', url, data);
   });
 
+  // API 代理：PUT 请求
+  ipcMain.handle(IPC_CHANNELS.API_PUT, async (_event, url: string, data?: unknown) => {
+    if (!backendPort || !isBackendReady) {
+      return { code: 5001, message: '本地服务尚未就绪' };
+    }
+    return apiRequest('PUT', url, data);
+  });
+
+  // API 代理：DELETE 请求
+  ipcMain.handle(IPC_CHANNELS.API_DELETE, async (_event, url: string) => {
+    if (!backendPort || !isBackendReady) {
+      return { code: 5001, message: '本地服务尚未就绪' };
+    }
+    return apiRequest('DELETE', url);
+  });
+
   // 安全存储：设置密钥
   ipcMain.handle(IPC_CHANNELS.KEYSTORE_SET, async (_event, key: string, value: string) => {
     if (!safeStorage.isEncryptionAvailable()) {

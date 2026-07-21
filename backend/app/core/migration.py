@@ -1,6 +1,7 @@
 """数据库迁移管理。
 
 新数据库从空状态初始化，已有数据库检查版本号。
+版本匹配时也执行 create_all 以发现新增模型表（幂等操作）。
 版本不匹配时重建表结构（开发阶段简化策略）。
 """
 
@@ -18,7 +19,7 @@ logger = setup_logger(__name__)
 # 用于存储数据库版本的表名
 _VERSION_TABLE = "_db_version"
 # 当前代码期望的数据库版本
-_CURRENT_VERSION: int = 1
+_CURRENT_VERSION: int = 2
 
 
 def _ensure_version_table(db: Session):
@@ -54,7 +55,7 @@ def ensure_schema(db: Session, base_metadata, db_file_path: str):
     """确保数据库 schema 与当前模型定义一致。
 
     新数据库 → 创建所有表
-    已有数据库版本匹配 → 跳过
+    已有数据库版本匹配 → 同步新增表（create_all 幂等）
     版本不匹配 → 重建表（开发阶段）
 
     Args:
@@ -80,7 +81,10 @@ def ensure_schema(db: Session, base_metadata, db_file_path: str):
     logger.info(f"当前数据库版本: v{current_version}，期望版本: v{_CURRENT_VERSION}")
 
     if current_version == _CURRENT_VERSION:
-        logger.info("数据库版本匹配，跳过迁移")
+        # 版本匹配但仍需执行 create_all 以发现新增模型表
+        # create_all 是幂等操作，不会重建已存在的表
+        base_metadata.create_all(bind=db.get_bind())
+        logger.info("数据库版本匹配，已同步新增表（如有）")
         return True
 
     # 开发阶段：版本不匹配时重建

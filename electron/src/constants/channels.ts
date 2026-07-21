@@ -7,6 +7,8 @@
 export const IPC_CHANNELS = {
   API_GET: 'api:get',
   API_POST: 'api:post',
+  API_PUT: 'api:put',
+  API_DELETE: 'api:delete',
   KEYSTORE_SET: 'keystore:set',
   KEYSTORE_GET: 'keystore:get',
   KEYSTORE_DELETE: 'keystore:delete',

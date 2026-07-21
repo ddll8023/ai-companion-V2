@@ -24,6 +24,14 @@ const api = {
   apiPost: <T>(url: string, data?: unknown): Promise<{ code: number; message: string; data?: T }> =>
     ipcRenderer.invoke(IPC_CHANNELS.API_POST, url, data),
 
+  /** 通过 IPC 发送 PUT 请求到本地服务 */
+  apiPut: <T>(url: string, data?: unknown): Promise<{ code: number; message: string; data?: T }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.API_PUT, url, data),
+
+  /** 通过 IPC 发送 DELETE 请求到本地服务 */
+  apiDelete: <T>(url: string): Promise<{ code: number; message: string; data?: T }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.API_DELETE, url),
+
   // ── 安全存储 ────────────────────────────────────────────
   /** 安全存储密钥（加密后保存到磁盘） */
   keystoreSet: (key: string, value: string): Promise<{ success: boolean; error?: string }> =>

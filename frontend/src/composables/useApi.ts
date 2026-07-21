@@ -18,12 +18,21 @@ export type RuntimeEnv = 'browser' | 'electron'
 export interface CommunicationAdapter {
   get: <T>(url: string) => Promise<ApiResponse<T>>
   post: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
+  put: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
+  delete: <T>(url: string) => Promise<ApiResponse<T>>
+}
+
+/** 从 AxiosResponse 中提取 ApiResponse */
+function extractData<T>(axiosPromise: Promise<{ data: ApiResponse<T> }>): Promise<ApiResponse<T>> {
+  return axiosPromise.then(res => res.data)
 }
 
 /** HTTP 适配器（浏览器开发模式） */
 const httpAdapter: CommunicationAdapter = {
-  get: <T>(url: string) => request.get<ApiResponse<T>>(url),
-  post: <T>(url: string, data?: unknown) => request.post<ApiResponse<T>>(url, data),
+  get: <T>(url: string) => extractData(request.get<ApiResponse<T>>(url)),
+  post: <T>(url: string, data?: unknown) => extractData(request.post<ApiResponse<T>>(url, data)),
+  put: <T>(url: string, data?: unknown) => extractData(request.put<ApiResponse<T>>(url, data)),
+  delete: <T>(url: string) => extractData(request.delete<ApiResponse<T>>(url)),
 }
 
 /** IPC 适配器（Electron 正式环境） */
@@ -37,6 +46,20 @@ const ipcAdapter: CommunicationAdapter = {
   },
   post: async <T>(url: string, data?: unknown) => {
     const result = await window.electronAPI!.apiPost<T>(url, data)
+    if (result.code !== 0) {
+      throw new Error(result.message || '请求失败')
+    }
+    return result as unknown as ApiResponse<T>
+  },
+  put: async <T>(url: string, data?: unknown) => {
+    const result = await window.electronAPI!.apiPut<T>(url, data)
+    if (result.code !== 0) {
+      throw new Error(result.message || '请求失败')
+    }
+    return result as unknown as ApiResponse<T>
+  },
+  delete: async <T>(url: string) => {
+    const result = await window.electronAPI!.apiDelete<T>(url)
     if (result.code !== 0) {
       throw new Error(result.message || '请求失败')
     }
@@ -69,6 +92,8 @@ export function useApi() {
   return {
     get: adapter.get,
     post: adapter.post,
+    put: adapter.put,
+    delete: adapter.delete,
 
     /** 当前运行环境是否为 Electron */
     isElectron: runtime === 'electron',

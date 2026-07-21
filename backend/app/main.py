@@ -94,8 +94,10 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # 注册路由
 from app.api import audit as api_audit
+from app.api import models as api_models
 
 app.include_router(api_audit.router)
+app.include_router(api_models.router)
 
 
 # ── 认证中间件（Electron 安全通信） ──────────────────────────────

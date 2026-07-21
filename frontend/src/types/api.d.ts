@@ -34,3 +34,40 @@ export interface HealthData {
     writable: boolean
   }
 }
+
+/** 模型供应商信息 */
+export interface ModelProvider {
+  [key: string]: string
+}
+
+/** 模型配置 */
+export interface ModelConfig {
+  id: number
+  name: string
+  provider: string
+  model_name: string
+  api_base: string | null
+  is_active: boolean
+  has_key: boolean
+  status: string
+  error_message: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 创建模型配置请求 */
+export interface ModelConfigCreate {
+  name: string
+  provider: string
+  model_name: string
+  api_base?: string
+}
+
+/** 更新模型配置请求 */
+export interface ModelConfigUpdate {
+  name?: string
+  provider?: string
+  model_name?: string
+  api_base?: string
+  has_key?: boolean
+}

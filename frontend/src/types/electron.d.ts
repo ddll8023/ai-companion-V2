@@ -6,6 +6,10 @@ export interface ElectronAPI {
   apiGet: <T>(url: string) => Promise<{ code: number; message: string; data?: T }>
   /** 通过 IPC 发送 POST 请求到本地服务 */
   apiPost: <T>(url: string, data?: unknown) => Promise<{ code: number; message: string; data?: T }>
+  /** 通过 IPC 发送 PUT 请求到本地服务 */
+  apiPut: <T>(url: string, data?: unknown) => Promise<{ code: number; message: string; data?: T }>
+  /** 通过 IPC 发送 DELETE 请求到本地服务 */
+  apiDelete: <T>(url: string) => Promise<{ code: number; message: string; data?: T }>
 
   // ── 安全存储 ──
   /** 安全存储密钥 */
