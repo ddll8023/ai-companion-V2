@@ -19,7 +19,7 @@ logger = setup_logger(__name__)
 # 用于存储数据库版本的表名
 _VERSION_TABLE = "_db_version"
 # 当前代码期望的数据库版本
-_CURRENT_VERSION: int = 3
+_CURRENT_VERSION: int = 4
 
 
 def _ensure_version_table(db: Session):

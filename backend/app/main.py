@@ -23,11 +23,14 @@ logger = setup_logger(__name__)
 _db_ready = False
 _db_migration_completed = False
 
+# 后台任务调度器
+_task_scheduler: object | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
-    global _db_ready, _db_migration_completed
+    global _db_ready, _db_migration_completed, _task_scheduler
 
     logger.info("服务启动中...")
     logger.info(f"数据目录: {settings.resolved_data_dir}")
@@ -50,7 +53,26 @@ async def lifespan(app: FastAPI):
         logger.error(f"数据库初始化失败: {exc}", exc_info=True)
         logger.warning("服务将以数据库不可用状态启动")
 
+    # 数据库就绪后启动后台任务调度器
+    if _db_ready:
+        try:
+            from app.tasks.scheduler import TaskScheduler
+            _task_scheduler = TaskScheduler(poll_interval=2.0, recovery_interval=60.0)
+            _task_scheduler.start()
+        except Exception as exc:
+            _task_scheduler = None
+            logger.error(f"后台任务调度器启动失败: {exc}", exc_info=True)
+            logger.warning("服务将在无后台任务调度器的情况下运行")
+
     yield
+
+    # 停止调度器
+    if _task_scheduler is not None:
+        try:
+            _task_scheduler.stop()
+        except Exception as exc:
+            logger.error(f"后台任务调度器停止异常: {exc}", exc_info=True)
+        _task_scheduler = None
 
     _db_ready = False
     _db_migration_completed = False
@@ -96,10 +118,12 @@ async def global_exception_handler(request: Request, exc: Exception):
 from app.api import audit as api_audit
 from app.api import chat as api_chat
 from app.api import models as api_models
+from app.api import tasks as api_tasks
 
 app.include_router(api_audit.router)
 app.include_router(api_chat.router)
 app.include_router(api_models.router)
+app.include_router(api_tasks.router)
 
 
 # ── 认证中间件（Electron 安全通信） ──────────────────────────────

@@ -335,9 +335,13 @@ Renderer（前端）不得获得以下内容：
 
 | 端 | 任务 |
 |----|------|
-| 后端 | `app/models/system.py` → `background_tasks` 模型 |
-| 后端 | `app/tasks/scheduler.py` → 简单轮询调度器（定时查询待处理任务并执行） |
+| 后端 | `app/models/task.py` → `background_tasks` 模型（含 dedup_key、source_version、优先级、重试机制） |
+| 后端 | `app/schemas/task.py` → 任务请求/响应 Schema |
 | 后端 | `app/services/task.py` → 任务 CRUD + 排他领取 + 去重 + 超时恢复 + 重试逻辑 |
+| 后端 | `app/tasks/registry.py` → 任务处理器注册表（`@register_handler` 装饰器） |
+| 后端 | `app/tasks/executor.py` → 任务执行器（查找处理器、解析参数、更新状态） |
+| 后端 | `app/tasks/scheduler.py` → 简单轮询调度器（独立线程，定时查询待处理任务并执行） |
+| 后端 | `app/api/tasks.py` → 任务 API 路由（创建/查询/取消/积压统计） |
 
 **关键设计点**：
 - 使用 SQLite 任务表实现，不引入外部消息队列
@@ -381,7 +385,8 @@ Renderer（前端）不得获得以下内容：
 |----|------|
 | 后端 | `app/models/memory.py` → `memories`、`memory_sources`、`memory_revisions` 模型 |
 | 后端 | `app/schemas/memory.py` → 记忆 Request/Response |
-| 后端 | `app/tasks/tasks/memory_extract.py` → 记忆提取后台任务 |
+| 后端 | `app/tasks/registry.py` → 任务处理器注册表（`@register_handler("memory.extract")`） |
+| 后端 | `app/tasks/memory_extract.py` → 记忆提取后台任务 |
 | 后端 | `app/services/memory.py` → 记忆 CRUD + 审查操作 + 状态管理 |
 | 后端 | `app/api/memories.py` → 记忆路由 |
 | 前端 | 长期记忆页面：按状态筛选、记忆卡片（含来源证据）、确认/纠正/否定/删除操作、修订历史 |
@@ -857,7 +862,7 @@ Renderer（前端）不得获得以下内容：
 | 3 | 最小 Electron 运行时 | ✅ 已完成 | 2026-07-20 | 2026-07-20 | Python 进程管理、安全 IPC 通信、safeStorage 密钥管理、单实例、后端状态指示灯 |
 | 4 | 模型配置 | ✅ 已完成 | 2026-07-21 | 2026-07-21 | ModelConfig 模型/CRUD/连接测试、密钥通过 Electron keystore 管理、前端设置页面、IPC PUT/DELETE 支持 |
 | 5 | 基础对话 | ✅ 已完成 | 2026-07-21 | 2026-07-21 | 会话/消息模型、CRUD、SSE 流式对话、多供应商流式调用、自动标题、前端完整对话页面 |
-| 6 | 后台任务 | ⏳ 待开发 | — | — | |
+| 6 | 后台任务 | ✅ 已完成 | 2026-07-21 | 2026-07-21 | BackgroundTask 模型、任务 Schema、任务 Service（创建/领取/执行/重试/超时恢复）、轮询调度器、处理器注册表、API 路由（创建/查询/取消/积压统计） |
 | 7 | 记忆提取与审查 | ⏳ 待开发 | — | — | |
 | 8 | 记忆检索与个性化上下文 | ⏳ 待开发 | — | — | |
 | 9 | 目标与任务 | ⏳ 待开发 | — | — | |
