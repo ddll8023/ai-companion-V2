@@ -76,7 +76,7 @@ function detectRuntime(): RuntimeEnv {
 }
 
 /** 获取当前环境的通信适配器 */
-function getAdapter(): CommunicationAdapter {
+export function getAdapter(): CommunicationAdapter {
   return detectRuntime() === 'electron' ? ipcAdapter : httpAdapter
 }
 

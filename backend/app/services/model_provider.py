@@ -18,6 +18,7 @@ from app.core.database import commit_or_rollback
 from app.models.system import ModelConfig
 from app.schemas.common import ErrorCode
 from app.schemas.model import ModelConfigCreate, ModelConfigResponse, ModelConfigUpdate
+from app.services.audit import record_audit
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -114,6 +115,12 @@ def activate_config(db: Session, config_id: int) -> ModelConfigResponse:
     """激活指定配置（先取消其他配置的激活状态）。"""
     config = _get_config_or_error(db, config_id)
 
+    if not config.has_key:
+        raise ServiceException(
+            ErrorCode.MODEL_CONFIG_ERROR,
+            "请先配置 API Key 后激活",
+        )
+
     # 取消全部激活状态
     db.execute(sa_update(ModelConfig).values(is_active=0))
     # 激活目标配置
@@ -121,6 +128,14 @@ def activate_config(db: Session, config_id: int) -> ModelConfigResponse:
     config.status = "active"
     commit_or_rollback(db)
     logger.info(f"激活模型配置: id={config_id}")
+
+    record_audit(
+        db=db,
+        action="model.config.activate",
+        target_type="model_config",
+        target_id=config_id,
+        summary=f"激活模型配置: provider={config.provider} model={config.model_name}",
+    )
     return ModelConfigResponse.model_validate(config)
 
 
@@ -163,6 +178,15 @@ def test_connection(
         config.status = "error"
         config.error_message = message[:256]
     commit_or_rollback(db)
+
+    record_audit(
+        db=db,
+        action="model.test_connection",
+        target_type="model_config",
+        target_id=config_id,
+        summary=f"测试模型连接: provider={config.provider} model={config.model_name}",
+        result=0 if success else 1,
+    )
 
     return success, message
 
@@ -209,6 +233,29 @@ def _do_test(
         return False, f"不支持的供应商类型: {provider}"
 
 
+def _test_http_api(
+    url: str,
+    headers: dict[str, str],
+    payload: dict,
+    timeout: int = 15,
+) -> tuple[bool, str]:
+    """发送 HTTP POST 请求测试模型连接。"""
+    try:
+        response = httpx.post(url, headers=headers, json=payload, timeout=timeout)
+        if response.status_code == 200:
+            return True, "连接成功"
+        else:
+            err_body = response.json()
+            err_msg = err_body.get("error", {}).get("message", str(response.status_code))
+            return False, f"连接失败: {err_msg}"
+    except httpx.TimeoutException:
+        return False, "连接超时（超过 15 秒）"
+    except httpx.ConnectError:
+        return False, f"无法连接到 {url}"
+    except Exception as exc:
+        return False, f"连接失败: {exc!s}"
+
+
 def _test_openai(
     model_name: str,
     api_key: str,
@@ -228,20 +275,7 @@ def _test_openai(
         "max_tokens": 1,
     }
 
-    try:
-        response = httpx.post(url, headers=headers, json=payload, timeout=15)
-        if response.status_code == 200:
-            return True, "连接成功"
-        else:
-            err_body = response.json()
-            err_msg = err_body.get("error", {}).get("message", str(response.status_code))
-            return False, f"连接失败: {err_msg}"
-    except httpx.TimeoutException:
-        return False, "连接超时（超过 15 秒）"
-    except httpx.ConnectError:
-        return False, f"无法连接到 {api_base or 'https://api.openai.com/v1'}"
-    except Exception as exc:
-        return False, f"连接失败: {exc!s}"
+    return _test_http_api(url, headers, payload)
 
 
 def _test_anthropic(
@@ -264,17 +298,4 @@ def _test_anthropic(
         "messages": [{"role": "user", "content": "test"}],
     }
 
-    try:
-        response = httpx.post(url, headers=headers, json=payload, timeout=15)
-        if response.status_code == 200:
-            return True, "连接成功"
-        else:
-            err_body = response.json()
-            err_msg = err_body.get("error", {}).get("message", str(response.status_code))
-            return False, f"连接失败: {err_msg}"
-    except httpx.TimeoutException:
-        return False, "连接超时（超过 15 秒）"
-    except httpx.ConnectError:
-        return False, f"无法连接到 {api_base or 'https://api.anthropic.com/v1'}"
-    except Exception as exc:
-        return False, f"连接失败: {exc!s}"
+    return _test_http_api(url, headers, payload)

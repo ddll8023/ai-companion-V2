@@ -293,14 +293,11 @@
 
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
-import { useApi } from '@/composables/useApi'
 import type { ModelConfig, ModelConfigCreate, ModelConfigUpdate } from '@/types/api'
 import * as modelApi from '@/api/model'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
-
-const api = useApi()
 
 // ── 供应商列表 ──
 const providers = ref<Record<string, string>>({})
@@ -417,6 +414,11 @@ async function saveConfig() {
 async function deleteConfig(config: ModelConfig) {
   if (!confirm(`确定删除配置「${config.name}」吗？`)) return
   try {
+    // 先清理安全存储中的密钥
+    if (window.electronAPI) {
+      await window.electronAPI.keystoreDelete(`model_key_${config.id}`)
+    }
+    // 再删除配置记录
     await modelApi.deleteConfig(config.id)
     await fetchConfigs()
   } catch (e: unknown) {
@@ -489,6 +491,13 @@ async function testConnection(config: ModelConfig) {
         await doTest(config.id, result.value)
         return
       }
+      // 密钥已丢失（如用户在系统 keychain 中手动清除）
+      // 同步更新 has_key 状态
+      testMessage.value = '密钥已丢失，请重新配置密钥'
+      testSuccess.value = false
+      await modelApi.updateConfig(config.id, { has_key: false })
+      await fetchConfigs()
+      return
     } catch {
       // 获取失败，回退到手动输入
     }

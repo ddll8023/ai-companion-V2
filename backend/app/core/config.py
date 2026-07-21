@@ -36,9 +36,6 @@ class Settings(BaseSettings):
     # CORS 配置（JSON 数组字符串）
     CORS_ORIGINS: str = '["http://127.0.0.1:9753","http://localhost:9753"]'
 
-    # 数据库版本号（当前模型定义的版本，用于迁移检测）
-    DB_VERSION: int = 1
-
     @property
     def cors_origins(self) -> list[str]:
         return json.loads(self.CORS_ORIGINS)

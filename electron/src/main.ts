@@ -337,12 +337,13 @@ function stopPythonBackend(): void {
     pythonProcess.kill('SIGTERM');
 
     // 5 秒后强制关闭
-    setTimeout(() => {
+    const forceKillTimer = setTimeout(() => {
       if (pythonProcess) {
         pythonProcess.kill('SIGKILL');
         pythonProcess = null;
       }
     }, 5000);
+    forceKillTimer.unref(); // 不阻止 Node 进程退出
   }
 }
 
