@@ -7,8 +7,10 @@ import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 import {
   faBrain,
   faBullseye,
+  faCheckCircle,
   faCircleExclamation,
   faClock,
+  faCommentDots,
   faComments,
   faDatabase,
   faFolder,
@@ -16,15 +18,25 @@ import {
   faHammer,
   faHouse,
   faInbox,
+  faKey,
+  faMessage,
+  faPaperPlane,
+  faPen,
+  faPlug,
+  faPlus,
   faServer,
   faSpinner,
+  faStop,
+  faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 
 library.add(
   faBrain,
   faBullseye,
+  faCheckCircle,
   faCircleExclamation,
   faClock,
+  faCommentDots,
   faComments,
   faDatabase,
   faFolder,
@@ -32,8 +44,16 @@ library.add(
   faHammer,
   faHouse,
   faInbox,
+  faKey,
+  faMessage,
+  faPaperPlane,
+  faPen,
+  faPlug,
+  faPlus,
   faServer,
   faSpinner,
+  faStop,
+  faTrash,
 )
 
 import App from './App.vue'

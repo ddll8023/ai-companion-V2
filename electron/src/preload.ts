@@ -10,6 +10,9 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from './constants/channels';
 
+// 保存监听器引用，实现精准移除（取代 removeAllListeners）
+let _backendStatusHandler: ((_event: Electron.IpcRendererEvent, status: { ready: boolean }) => void) | null = null;
+
 /**
  * 受控白名单 API。
  * Renderer 只能通过此接口调用指定的桌面能力。
@@ -61,15 +64,22 @@ const api = {
   // ── 事件监听 ────────────────────────────────────────────
   /** 监听后端服务状态变化 */
   onBackendStatus: (callback: (status: { ready: boolean }) => void): void => {
-    const handler = (_event: Electron.IpcRendererEvent, status: { ready: boolean }) => {
+    // 先移除上一个监听器（确保不累积）
+    if (_backendStatusHandler) {
+      ipcRenderer.removeListener(IPC_CHANNELS.BACKEND_STATUS, _backendStatusHandler);
+    }
+    _backendStatusHandler = (_event: Electron.IpcRendererEvent, status: { ready: boolean }) => {
       callback(status);
     };
-    ipcRenderer.on(IPC_CHANNELS.BACKEND_STATUS, handler);
+    ipcRenderer.on(IPC_CHANNELS.BACKEND_STATUS, _backendStatusHandler);
   },
 
   /** 移除后端服务状态监听 */
   removeBackendStatusListener: (): void => {
-    ipcRenderer.removeAllListeners(IPC_CHANNELS.BACKEND_STATUS);
+    if (_backendStatusHandler) {
+      ipcRenderer.removeListener(IPC_CHANNELS.BACKEND_STATUS, _backendStatusHandler);
+      _backendStatusHandler = null;
+    }
   },
 };
 

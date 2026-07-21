@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -124,18 +124,41 @@ def chat_stream(
 ):
     """发送消息并接收流式回复（SSE）。
 
+    分两阶段执行：
+    1. 初始化阶段 — 验证、保存用户消息、创建占位消息（使用注入的 db session）
+    2. 流式生成阶段 — 模型对话（使用独立 db session，不 hold 连接池）
+
     返回 Server-Sent Events 流：
-    - data: {"type": "user_saved", "message_id": 1}
     - data: {"type": "token", "content": "..."}
     - data: {"type": "done", "message_id": 2}
     - data: {"type": "error", "message": "..."}
     """
+    # 阶段 1：初始化（快速完成，释放注入的 db session）
+    init_result = services_chat.initialize_chat_stream(
+        db=db,
+        session_id=session_id,
+        user_content=body.content,
+        api_key=body.api_key,
+    )
+    if init_result.get("error"):
+        return JSONResponse(
+            status_code=200,
+            content=error(message=init_result["error"]),
+        )
+
+    assistant_msg_id = init_result["assistant_message_id"]
+    active_config = init_result["active_config"]
+    model_messages = init_result["model_messages"]
+    api_key = init_result["api_key"]
+
+    # 阶段 2：流式生成（使用独立 session）
     def event_generator():
-        for event in services_chat.chat_stream(
-            db=db,
+        for event in services_chat.run_chat_stream(
             session_id=session_id,
-            user_content=body.content,
-            api_key=body.api_key,
+            assistant_msg_id=assistant_msg_id,
+            active_config=active_config,
+            model_messages=model_messages,
+            api_key=api_key,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 

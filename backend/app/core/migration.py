@@ -19,6 +19,14 @@ logger = setup_logger(__name__)
 # 用于存储数据库版本的表名
 _VERSION_TABLE = "_db_version"
 # 当前代码期望的数据库版本
+#
+# 版本变更记录:
+#   v1 — 初始创建: sessions, messages, model_configs, audit_logs
+#   v2 — 添加: background_tasks
+#   v3 — 未记录变更
+#   v4 — 未记录变更
+#
+# 注意: 开发阶段版本不匹配时会清空数据重建，生产阶段需实现逐版本迁移。
 _CURRENT_VERSION: int = 4
 
 

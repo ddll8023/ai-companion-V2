@@ -36,8 +36,8 @@ def execute_task(task_id: int, task_type: str, payload: str | None) -> None:
             db.close()
         return
 
-    parsed = _parse_payload(task_id, payload)
-    if parsed is None:
+    parsed, ok = _parse_payload(task_id, payload)
+    if not ok:
         return
 
     try:
@@ -64,12 +64,19 @@ def execute_task(task_id: int, task_type: str, payload: str | None) -> None:
 """辅助函数"""
 
 
-def _parse_payload(task_id: int, payload_str: str | None) -> dict | None:
-    """解析任务参数字符串，解析失败时标记任务失败。"""
+def _parse_payload(task_id: int, payload_str: str | None) -> tuple[dict | None, bool]:
+    """解析任务参数字符串。
+
+    Returns:
+        (parsed, ok):
+        - parsed: 解析后的参数字典，payload 为 None 时也返回 None
+        - ok: True 表示可继续执行，False 表示解析失败不应继续
+    """
     if payload_str is None:
-        return None
+        return None, True  # 无 payload 是合法的
+
     try:
-        return json.loads(payload_str)
+        return json.loads(payload_str), True
     except json.JSONDecodeError as e:
         db = get_background_db_session()
         try:
@@ -80,4 +87,4 @@ def _parse_payload(task_id: int, payload_str: str | None) -> dict | None:
             )
         finally:
             db.close()
-        return None
+        return None, False

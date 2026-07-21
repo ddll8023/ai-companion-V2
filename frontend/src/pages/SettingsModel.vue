@@ -288,6 +288,18 @@
         </div>
       </div>
     </Transition>
+
+    <!-- 删除配置确认对话框 -->
+    <ConfirmDialog
+      :visible="showDeleteDialog"
+      title="确认删除"
+      :message="deleteTarget ? `确定删除配置「${deleteTarget.name}」吗？此操作不可撤销。` : ''"
+      confirm-text="删除"
+      cancel-text="取消"
+      :danger="true"
+      @confirm="confirmDelete"
+      @cancel="showDeleteDialog = false"
+    />
   </div>
 </template>
 
@@ -299,6 +311,7 @@ import { getAdapter } from '@/composables/useApi'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
+import ConfirmDialog from '@/components/custom/ConfirmDialog.vue'
 
 const adapter = getAdapter()
 
@@ -339,6 +352,10 @@ const keyError = ref<string | null>(null)
 const testKeyDialogVisible = ref(false)
 const testKeyDialogConfig = ref<ModelConfig | null>(null)
 const testKeyInput = ref('')
+
+// ── 删除确认对话框 ──
+const showDeleteDialog = ref(false)
+const deleteTarget = ref<ModelConfig | null>(null)
 
 // ── 计算属性 ──
 const formValid = computed(() => {
@@ -415,15 +432,23 @@ async function saveConfig() {
 }
 
 async function deleteConfig(config: ModelConfig) {
-  if (!confirm(`确定删除配置「${config.name}」吗？`)) return
+  deleteTarget.value = config
+  showDeleteDialog.value = true
+}
+
+async function confirmDelete() {
+  if (!deleteTarget.value) return
   try {
     // 通过通信适配器清理安全存储中的密钥（页面不感知获取方式）
-    await adapter.deleteApiKey(config.id)
+    await adapter.deleteApiKey(deleteTarget.value.id)
     // 再删除配置记录
-    await modelApi.deleteConfig(config.id)
+    await modelApi.deleteConfig(deleteTarget.value.id)
     await fetchConfigs()
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '删除失败'
+  } finally {
+    showDeleteDialog.value = false
+    deleteTarget.value = null
   }
 }
 

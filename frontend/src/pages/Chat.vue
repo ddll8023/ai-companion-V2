@@ -147,9 +147,9 @@
               </div>
             </div>
 
-            <!-- 流式传输中的助手消息（尚未保存到 messages 数组的部分） -->
+            <!-- 流式传输中的助手消息 -->
             <div
-              v-if="streamingContent !== '' && !hasLiveAssistantMessage"
+              v-if="streamingContent !== ''"
               class="flex justify-start"
             >
               <div
@@ -205,7 +205,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
+import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
 import type { Message, Session, ChatStreamEvent } from '@/types/api'
 import * as chatApi from '@/api/chat'
 import * as modelApi from '@/api/model'
@@ -244,11 +244,6 @@ const canChat = computed(() => {
 
 const canSend = computed(() => {
   return inputText.value.trim().length > 0 && !isGenerating.value
-})
-
-/** 消息列表中是否已有 live assistant 消息（status=generating） */
-const hasLiveAssistantMessage = computed(() => {
-  return messages.value.some(m => m.role === 'assistant' && m.status === 'generating')
 })
 
 // ── 生命周期 ──────────────────────────────────────────────────────────────
@@ -353,6 +348,14 @@ async function handleSend() {
 
   isGenerating.value = true
   streamingContent.value = ''
+
+  // 清理旧生成消息：将已有 status=generating 的消息标记为已中止
+  // 异常恢复场景下可能残存未结束的占位消息
+  messages.value = messages.value.map(m =>
+    m.role === 'assistant' && m.status === 'generating'
+      ? { ...m, status: 'aborted' }
+      : m,
+  )
 
   // 创建 AbortController 用于中止
   abortController.value = new AbortController()
@@ -496,10 +499,6 @@ function handleKeydown(e: KeyboardEvent) {
 }
 
 // ── 监听器 ────────────────────────────────────────────────────────────────
-
-watch(currentSessionId, () => {
-  // 会话切换后更新会话列表的高亮状态
-})
 
 // ── DOM 事件绑定 ─────────────────────────────────────────────────────────
 

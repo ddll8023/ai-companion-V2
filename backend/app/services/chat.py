@@ -18,7 +18,7 @@ from typing import Any, Generator
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
-from app.core.database import commit_or_rollback
+from app.core.database import commit_or_rollback, get_background_db_session
 from app.models.chat import ChatSession, Message
 from app.schemas.chat import MessageResponse, SessionCreate, SessionResponse, SessionUpdate
 from app.schemas.common import ErrorCode
@@ -165,28 +165,30 @@ def _fail_assistant_message(db: Session, message_id: int, error_message: str) ->
 # ── 流式对话编排 ────────────────────────────────────────────────────────────
 
 
-def chat_stream(
+def initialize_chat_stream(
     db: Session,
     session_id: int,
     user_content: str,
     api_key: str | None,
-) -> Generator[dict[str, Any], None, None]:
-    """流式对话编排。
+) -> dict[str, Any]:
+    """流式对话初始化（在注入的 db session 中快速执行，不 hold session）。
+
+    验证会话、检查并发、保存用户消息、获取模型配置、创建占位消息。
 
     Args:
-        db: 数据库会话
+        db: 数据库会话（由 Depends 注入，本函数返回后释放）
         session_id: 会话 ID
         user_content: 用户消息内容
-        api_key: API Key（浏览器模式需要传入，Electron 模式从 keystore 获取）
+        api_key: API Key
 
-    Yields:
-        流式事件字典:
-        - {"type": "token", "content": "..."} — 内容 token
-        - {"type": "done", "message_id": 123} — 完成
-        - {"type": "error", "message": "..."} — 错误
+    Returns:
+        成功时返回包含生成所需全部信息的 dict；错误时返回 {"error": "..."}
     """
     # 验证会话存在
-    session = _get_session_or_error(db, session_id)
+    try:
+        _get_session_or_error(db, session_id)
+    except ServiceException as e:
+        return {"error": e.message}
 
     # 检查并发：同一会话同一时间只允许一个生成任务
     existing_generating = db.scalar(
@@ -196,84 +198,126 @@ def chat_stream(
         ).limit(1)
     )
     if existing_generating is not None:
-        yield {"type": "error", "message": "当前会话已有正在生成的回复，请等待完成或中止后重试"}
-        return
+        return {"error": "当前会话已有正在生成的回复，请等待完成或中止后重试"}
 
     # 保存用户消息
     user_msg = _save_user_message(db, session_id, user_content)
-    yield {"type": "user_saved", "message_id": user_msg.id}
 
     # 获取激活的模型配置
     try:
         active_config = model_provider.get_active_config(db)
         if active_config is None:
-            raise ServiceException(ErrorCode.MODEL_CONFIG_ERROR, "未配置模型，请在设置中完成模型配置")
+            return {"error": "未配置模型，请在设置中完成模型配置"}
     except ServiceException as e:
-        yield {"type": "error", "message": e.message}
-        return
+        return {"error": e.message}
 
     # 获取 API Key
     resolved_key = api_key
     if not resolved_key:
-        # 尝试从 keystore 获取（仅 Electron 模式）
-        # 浏览器模式必须传入 api_key
-        yield {"type": "error", "message": "缺少 API Key"}
-        return
+        return {"error": "缺少 API Key"}
 
     # 创建助手占位消息
     assistant_msg = _create_assistant_placeholder(db, session_id, active_config.model_name)
 
-    # 获取历史消息
+    # 获取历史消息并构造模型调用消息列表
     history_messages = get_messages(db, session_id)
-
-    # 构造模型调用消息列表（排除当前助手的占位消息）
     model_messages = []
     for msg in history_messages:
-        m: dict[str, str] = {"role": msg.role, "content": msg.content}
-        model_messages.append(m)
+        model_messages.append({"role": msg.role, "content": msg.content})
 
     # 尝试自动更新会话标题（首次对话时）
     _try_auto_title(db, session_id, user_content, history_messages)
 
-    # 执行流式调用
+    return {
+        "user_message_id": user_msg.id,
+        "assistant_message_id": assistant_msg.id,
+        "active_config": {
+            "provider": active_config.provider,
+            "model_name": active_config.model_name,
+            "api_base": active_config.api_base,
+        },
+        "model_messages": model_messages[:-1],  # 去掉占位消息
+        "api_key": resolved_key,
+    }
+
+
+def run_chat_stream(
+    session_id: int,
+    assistant_msg_id: int,
+    active_config: dict[str, Any],
+    model_messages: list[dict[str, str]],
+    api_key: str,
+) -> Generator[dict[str, Any], None, None]:
+    """流式对话生成（使用独立 db session，不阻塞连接池）。
+
+    Args:
+        session_id: 会话 ID
+        assistant_msg_id: 助手占位消息 ID
+        active_config: 模型配置信息 {provider, model_name, api_base}
+        model_messages: 历史消息列表
+        api_key: API Key
+
+    Yields:
+        流式事件字典:
+        - {"type": "token", "content": "..."} — 内容 token
+        - {"type": "done", "message_id": 123} — 完成
+        - {"type": "error", "message": "..."} — 错误
+    """
     collected_content = ""
+
     try:
         for token in model_provider.chat_stream(
-            provider=active_config.provider,
-            model_name=active_config.model_name,
-            api_key=resolved_key,
-            api_base=active_config.api_base,
-            messages=model_messages[:-1],  # 去掉占位消息
+            provider=active_config["provider"],
+            model_name=active_config["model_name"],
+            api_key=api_key,
+            api_base=active_config.get("api_base"),
+            messages=model_messages,
             system_prompt=_DEFAULT_SYSTEM_PROMPT,
         ):
             collected_content += token
             yield {"type": "token", "content": token}
 
-        # 完成
-        _complete_assistant_message(db, assistant_msg.id, collected_content)
-        yield {"type": "done", "message_id": assistant_msg.id}
+        # 完成：使用独立 session 持久化
+        db = get_background_db_session()
+        try:
+            _complete_assistant_message(db, assistant_msg_id, collected_content)
+        finally:
+            db.close()
+        yield {"type": "done", "message_id": assistant_msg_id}
 
     except GeneratorExit:
         # 客户端断开连接 → 中止生成
         logger.warning(f"客户端断开连接，生成中止: session_id={session_id}")
-        if collected_content:
-            _abort_assistant_message(db, assistant_msg.id, collected_content)
-        else:
-            _fail_assistant_message(db, assistant_msg.id, "用户中止")
+        db = get_background_db_session()
+        try:
+            if collected_content:
+                _abort_assistant_message(db, assistant_msg_id, collected_content)
+            else:
+                _fail_assistant_message(db, assistant_msg_id, "用户中止")
+        finally:
+            db.close()
         raise
 
     except ServiceException as e:
-        if collected_content:
-            _abort_assistant_message(db, assistant_msg.id, collected_content)
-        else:
-            _fail_assistant_message(db, assistant_msg.id, e.message)
+        db = get_background_db_session()
+        try:
+            if collected_content:
+                _abort_assistant_message(db, assistant_msg_id, collected_content)
+            else:
+                _fail_assistant_message(db, assistant_msg_id, e.message)
+        finally:
+            db.close()
         yield {"type": "error", "message": e.message}
     except Exception as e:
         logger.error(f"对话流式调用异常: {e}", exc_info=True)
-        if collected_content:
-            _abort_assistant_message(db, assistant_msg.id, collected_content)
-        else:
-            _fail_assistant_message(db, assistant_msg.id, str(e))
+        db = get_background_db_session()
+        try:
+            if collected_content:
+                _abort_assistant_message(db, assistant_msg_id, collected_content)
+            else:
+                _fail_assistant_message(db, assistant_msg_id, str(e))
+        finally:
+            db.close()
         yield {"type": "error", "message": f"对话生成失败: {e!s}"}
 
 
