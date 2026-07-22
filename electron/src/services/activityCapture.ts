@@ -13,16 +13,19 @@
  * - 采集前硬阻断优先（无法确认安全时停止采集）
  * - 本地判断不依赖后端可用性
  * - 单事件失败不影响整体采集流程
+ *
+ * 平台差异：
+ * - 通过 ActivityPlatformAdapter 接口调用平台能力，
+ *   不直接 import 平台模块，不散落平台判断。
+ * - 由 getActivityCaptureManager() 自动选择当前平台适配器。
  */
 
 import { httpRequest } from './httpClient';
 import {
+  ActivityPlatformAdapter,
   FrontmostAppInfo,
-  getIdleTime,
-  getFrontmostAppInfo,
-  getFrontmostAppName,
-  checkAccessibilityPermission,
-} from '../platform/macOSActivity';
+} from './activityPlatform';
+import { getPlatform } from '../constants/platform';
 
 // ── 活动事件类型（与后端 ActivityEvent Schema 保持一致） ─────────────────
 
@@ -64,24 +67,24 @@ type StatusCallback = (status: CaptureStatus) => void;
 /** 默认采集间隔（毫秒） */
 const DEFAULT_POLL_INTERVAL_MS = 5000;
 
-/** 连续相同应用的最大上报间隔（秒） */
-const MAX_SAME_APP_INTERVAL_SECONDS = 300;
-
 /** 最小空闲阈值（秒），超过此值认为用户空闲 */
 const IDLE_THRESHOLD_SECONDS = 300; // 5 分钟无操作
 
 /** 后端的活动事件提交端点 */
 const SUBMIT_EVENTS_PATH = '/api/v1/activities/events';
 
-/** 后端的隐私规则评估端点 */
-const EVALUATE_PRIVACY_PATH = '/api/v1/activities/privacy/evaluate';
-
 /** 后端的活动事件批量提交最大条数 */
 const MAX_BATCH_SIZE = 20;
+
+/** 缓冲区最大事件数（超过后丢弃最旧事件） */
+const MAX_BUFFER_SIZE = 200;
 
 // ── 活动采集管理器 ─────────────────────────────────────────────────────────
 
 export class ActivityCaptureManager {
+  /** 平台采集适配器（macOS / Windows） */
+  private _adapter: ActivityPlatformAdapter;
+
   /** 是否正在运行 */
   private _running = false;
 
@@ -126,6 +129,10 @@ export class ActivityCaptureManager {
   /** 后端地址和认证令牌（由 Main 进程设置） */
   private _backendPort = 0;
   private _authToken = '';
+
+  constructor(adapter: ActivityPlatformAdapter) {
+    this._adapter = adapter;
+  }
 
   // ── 生命周期管理 ──────────────────────────────────────────────────────
 
@@ -188,7 +195,7 @@ export class ActivityCaptureManager {
     }
 
     // 检测 Accessibility 权限
-    const accessibilityStatus = await checkAccessibilityPermission();
+    const accessibilityStatus = await this._adapter.checkAccessibilityPermission();
     const accessibilityAvailable = accessibilityStatus === 'available';
     this._status.accessibilityAvailable = accessibilityAvailable;
 
@@ -207,7 +214,7 @@ export class ActivityCaptureManager {
       this._capture();
     }, this._pollIntervalMs);
 
-    // 每 30 秒刷新隐私规则缓存
+    // 每 30 秒提交缓冲区
     this._bufferTimer = setInterval(() => {
       this._flushBuffer();
     }, 30000);
@@ -218,12 +225,43 @@ export class ActivityCaptureManager {
 
   /**
    * 停止活动采集。
-   * 停止轮询并清空事件缓冲区。
+   * 停止轮询并提交剩余缓冲区事件。
    */
   async stop(): Promise<void> {
     this._running = false;
     this._status.running = false;
 
+    this._clearTimers();
+
+    // 提交剩余缓冲事件
+    await this._flushBuffer();
+
+    this._lastCapture = null;
+    this._notifyStatus();
+    console.log('[ActivityCapture] 已停止采集');
+  }
+
+  /**
+   * 同步停止活动采集（用于应用退出场景）。
+   *
+   * 与 stop() 的区别：
+   * - 同步执行，不 await 缓冲区提交
+   * - 仅停止定时器和管理状态
+   * - 应用退出时缓冲区数据丢失是可接受的（最多几秒的事件）
+   */
+  stopSync(): void {
+    this._running = false;
+    this._status.running = false;
+
+    this._clearTimers();
+    this._lastCapture = null;
+
+    this._notifyStatus();
+    console.log('[ActivityCapture] 同步停止（应用退出）');
+  }
+
+  /** 清除所有定时器。 */
+  private _clearTimers(): void {
     if (this._pollTimer) {
       clearInterval(this._pollTimer);
       this._pollTimer = null;
@@ -233,13 +271,6 @@ export class ActivityCaptureManager {
       clearInterval(this._bufferTimer);
       this._bufferTimer = null;
     }
-
-    // 提交剩余缓冲事件
-    await this._flushBuffer();
-
-    this._lastCapture = null;
-    this._notifyStatus();
-    console.log('[ActivityCapture] 已停止采集');
   }
 
   /**
@@ -286,10 +317,10 @@ export class ActivityCaptureManager {
       let appInfo: FrontmostAppInfo;
 
       if (this._status.accessibilityAvailable) {
-        appInfo = await getFrontmostAppInfo();
+        appInfo = await this._adapter.getFrontmostAppInfo();
       } else {
         // 降级：只获取应用名称，不获取窗口标题
-        const appName = await getFrontmostAppName();
+        const appName = await this._adapter.getFrontmostAppName();
         appInfo = {
           appName: appName || '',
           windowTitle: null,
@@ -305,24 +336,27 @@ export class ActivityCaptureManager {
       }
 
       // 2. 获取用户空闲状态
-      const idleInfo = await getIdleTime();
+      const idleInfo = await this._adapter.getIdleTime();
       const isIdle = idleInfo.success && idleInfo.idleSeconds >= IDLE_THRESHOLD_SECONDS;
 
       // 3. 本地隐私规则检查（采集前硬阻断）
       const localCheck = this._localPrivacyCheck(appInfo.appName, appInfo.windowTitle);
       if (!localCheck.allow) {
         this._status.eventsSkipped++;
-        this._handleBlockedEvent(appInfo, localCheck.reason || '本地规则阻断');
+        // 阻断事件不入缓冲区、不提交后端——阻断就是「没发生」
+        console.log(
+          `[ActivityCapture] 阻断: ${appInfo.appName}, 原因: ${localCheck.reason}`,
+        );
         return;
       }
 
-      // 4. 去重判断：连续相同应用在短时间内合并
+      // 4. 去重判断：连续相同应用合并
       const now = new Date().toISOString();
       const sourceId = this._generateSourceId(appInfo);
 
       if (this._lastCapture && this._lastCapture.sourceId === sourceId) {
         if (this._lastCapture.appName === appInfo.appName) {
-          // 相同应用且相同窗口 → 更新持续时间，不产生新事件
+          // 相同应用且相同窗口 → 更新时间戳，不产生新事件
           this._status.lastCaptureTime = now;
           return;
         }
@@ -336,7 +370,7 @@ export class ActivityCaptureManager {
         ended_at: null,
         duration_seconds: null,
         is_idle: isIdle,
-        platform: 'macos',
+        platform: getPlatform(),
         source_id: sourceId,
       };
 
@@ -367,46 +401,25 @@ export class ActivityCaptureManager {
     }
   }
 
-  /**
-   * 处理被阻断的事件（发送阻断事件记录到后端）。
-   */
-  private async _handleBlockedEvent(
-    appInfo: FrontmostAppInfo,
-    reason: string,
-  ): Promise<void> {
-    try {
-      const event: ActivityEvent = {
-        app_name: appInfo.appName || 'unknown',
-        window_title: appInfo.windowTitle,
-        started_at: new Date().toISOString(),
-        ended_at: null,
-        duration_seconds: null,
-        is_idle: false,
-        platform: 'macos',
-        source_id: `blocked_${Date.now()}_${appInfo.appName}`,
-      };
-
-      this._eventBuffer.push(event);
-
-      // 阻断事件即时提交（不积累）
-      await this._flushBuffer();
-    } catch {
-      // 阻断事件提交失败不影响采集
-    }
-  }
-
-  // ── 本地隐私规则检查 ──────────────────────────────────────────────────
+  // ── 本地隐私规则检查（采集前硬阻断层） ─────────────────────────────────
 
   /**
    * 本地隐私规则检查（采集前硬阻断层）。
    *
-   * 检查项（按优先级）：
-   * 1. 全局暂停 → 阻断
-   * 2. 应用黑名单 → 阻断
-   * 3. 临时暂停 → 阻断
+   * 支持规则类型：
+   * 1. global_pause    → 全局暂停
+   * 2. app_blacklist   → 应用黑名单（名称或 Bundle ID 匹配）
+   * 3. app_whitelist   → 应用白名单（仅白名单中的应用可采集）
+   * 4. title_keyword   → 窗口标题关键字阻断
+   * 5. time_based      → 特定时段暂停
+   * 6. temp_pause      → 单次临时暂停
    *
-   * 内容脱敏和白名单等复杂规则由后端处理。
-   * 无法确认安全时默认阻断。
+   * 不在此层处理：
+   * - content_masking  → 内容脱敏，由后端 Python 层处理
+   *
+   * 设计原则：
+   * - 采集前硬阻断：敏感场景在采集前被阻断，而不是先采集后判断
+   * - 无法确认安全时默认阻断（fail closed）
    */
   private _localPrivacyCheck(
     appName: string,
@@ -417,35 +430,109 @@ export class ActivityCaptureManager {
     }
 
     const appNameLower = appName.toLowerCase();
+    const now = new Date();
+    const currentHour = now.getHours();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    for (const rule of this._privacyRules) {
-      if (!rule.active) continue;
+    // 先分类规则，按优先级排序
+    const activeRules = this._privacyRules.filter((r) => r.active);
 
-      if (rule.type === 'global_pause') {
-        return { allow: false, reason: '全局暂停采集（本地规则）' };
-      }
+    for (const rule of activeRules) {
+      try {
+        switch (rule.type) {
+          // ── 全局暂停 ─────────────────────────────────────────────
+          case 'global_pause':
+            return { allow: false, reason: '全局暂停采集（本地规则）' };
 
-      if (rule.type === 'app_blacklist') {
-        const blacklistApps = rule.value
-          .split('\n')
-          .map((s) => s.trim().toLowerCase())
-          .filter((s) => s.length > 0);
+          // ── 应用黑名单 ─────────────────────────────────────────
+          case 'app_blacklist': {
+            const blacklistApps = rule.value
+              .split('\n')
+              .map((s) => s.trim().toLowerCase())
+              .filter((s) => s.length > 0);
 
-        if (blacklistApps.some((ba) => appNameLower === ba || appNameLower.includes(ba))) {
-          return { allow: false, reason: `应用在黑名单中: ${appName}` };
-        }
-      }
-
-      if (rule.type === 'temp_pause') {
-        try {
-          const config = JSON.parse(rule.value);
-          const untilTime = new Date(config.pause_until);
-          if (untilTime > new Date()) {
-            return { allow: false, reason: '临时暂停中（本地规则）' };
+            if (blacklistApps.some((ba) => appNameLower === ba || appNameLower.includes(ba))) {
+              return { allow: false, reason: `应用在黑名单中: ${appName}` };
+            }
+            break;
           }
-        } catch {
-          // 解析失败，跳过
+
+          // ── 应用白名单 ─────────────────────────────────────────
+          case 'app_whitelist': {
+            const whitelistApps = rule.value
+              .split('\n')
+              .map((s) => s.trim().toLowerCase())
+              .filter((s) => s.length > 0);
+
+            // 白名单存在且非空时，不在白名单中的应用一律阻断
+            if (whitelistApps.length > 0 && !whitelistApps.some((wa) => appNameLower === wa)) {
+              return { allow: false, reason: `应用不在白名单中: ${appName}` };
+            }
+            break;
+          }
+
+          // ── 窗口标题关键字阻断 ─────────────────────────────────
+          case 'title_keyword': {
+            if (!windowTitle) break; // 无窗口标题时无法判断，跳过
+
+            const windowTitleLower = windowTitle.toLowerCase();
+            const keywords = rule.value
+              .split('\n')
+              .map((s) => s.trim().toLowerCase())
+              .filter((s) => s.length > 0);
+
+            if (keywords.some((kw) => windowTitleLower.includes(kw))) {
+              return { allow: false, reason: `窗口标题包含敏感关键字` };
+            }
+            break;
+          }
+
+          // ── 特定时段暂停 ───────────────────────────────────────
+          case 'time_based': {
+            const config = JSON.parse(rule.value);
+            const startHour = config.start_hour;
+            const endHour = config.end_hour;
+
+            if (typeof startHour !== 'number' || typeof endHour !== 'number') {
+              break; // 配置格式错误，跳过
+            }
+
+            const startMinutes = startHour * 60;
+            const endMinutes = endHour * 60;
+
+            const inRange = startMinutes <= endMinutes
+              // 同一天内（如 9:00-18:00）
+              ? (currentMinutes >= startMinutes && currentMinutes < endMinutes)
+              // 跨天（如 22:00-07:00）
+              : (currentMinutes >= startMinutes || currentMinutes < endMinutes);
+
+            if (inRange) {
+              return { allow: false, reason: `当前时段暂停采集（${startHour}:00-${endHour}:00）` };
+            }
+            break;
+          }
+
+          // ── 单次临时暂停 ───────────────────────────────────────
+          case 'temp_pause': {
+            const config = JSON.parse(rule.value);
+            const untilTime = new Date(config.pause_until);
+            if (untilTime > now) {
+              return { allow: false, reason: '临时暂停中（本地规则）' };
+            }
+            break;
+          }
+
+          // ── 内容脱敏 ─────────────────────────────────────────
+          case 'content_masking':
+            // 脱敏由后端 Python 层处理，本地只做硬阻断
+            break;
+
+          default:
+            break;
         }
+      } catch {
+        // 单条规则解析失败，不影响其他规则判断
+        continue;
       }
     }
 
@@ -477,10 +564,9 @@ export class ActivityCaptureManager {
       console.error('[ActivityCapture] 事件提交失败:', err);
       this._status.errors++;
 
-      // 提交失败时重新放回缓冲区（防止丢失）
-      // 但如果缓冲区已很大，丢弃旧事件以确保不持续增长
-      const maxBufferSize = 200;
-      this._eventBuffer = [...batch, ...this._eventBuffer].slice(0, maxBufferSize);
+      // 提交失败时重新放回缓冲区
+      // 保留最新事件，丢弃最旧事件，防止缓冲区无限增长
+      this._eventBuffer = [...this._eventBuffer, ...batch].slice(-MAX_BUFFER_SIZE);
       this._notifyStatus();
     }
   }
@@ -520,16 +606,35 @@ export class ActivityCaptureManager {
     const now = new Date();
     // 按 30 秒窗口对齐，避免短时间内的重复事件
     const windowKey = Math.floor(now.getTime() / 30000);
-    return `macos_${info.appName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${windowKey}`;
+    return `${getPlatform()}_${info.appName.replace(/[^a-zA-Z0-9_-]/g, '_')}_${windowKey}`;
   }
 }
 
-// 单例导出
+// ── 单例管理 ──────────────────────────────────────────────────────────────
+
 let _instance: ActivityCaptureManager | null = null;
 
+/**
+ * 获取活动采集管理器单例。
+ *
+ * 自动根据当前平台选择适配器：
+ * - macOS → MacOSCollector
+ * - Windows → WindowsCollector
+ */
 export function getActivityCaptureManager(): ActivityCaptureManager {
   if (!_instance) {
-    _instance = new ActivityCaptureManager();
+    const platform = getPlatform();
+    let adapter: ActivityPlatformAdapter;
+
+    if (platform === 'macos') {
+      const { getMacOSCollector } = require('../platform/macOSCollector');
+      adapter = getMacOSCollector();
+    } else {
+      const { getWindowsCollector } = require('../platform/windowsCollector');
+      adapter = getWindowsCollector();
+    }
+
+    _instance = new ActivityCaptureManager(adapter);
   }
   return _instance;
 }

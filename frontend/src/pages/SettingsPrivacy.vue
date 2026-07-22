@@ -302,7 +302,7 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
@@ -343,6 +343,9 @@ const captureStatus = ref<{
   errors: number
   accessibilityAvailable: boolean
 } | null>(null)
+
+/** 采集状态轮询定时器引用（用于清理）。 */
+let _statusPollTimer: ReturnType<typeof setInterval> | null = null
 
 const form = reactive({
   rule_type: 'app_blacklist',
@@ -597,6 +600,19 @@ onMounted(() => {
   if (isElectron) {
     fetchCapabilities()
     fetchCaptureStatus()
+
+    // 启动采集状态轮询（每 10 秒刷新一次，反映最新计数）
+    _statusPollTimer = setInterval(() => {
+      fetchCaptureStatus()
+    }, 10000)
+  }
+})
+
+onUnmounted(() => {
+  // 清理采集状态轮询
+  if (_statusPollTimer) {
+    clearInterval(_statusPollTimer)
+    _statusPollTimer = null
   }
 })
 </script>

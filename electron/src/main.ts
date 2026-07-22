@@ -643,10 +643,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
-  // 停止活动采集
+  // 同步停止活动采集（不等待缓冲区提交，退出时数据丢失可接受）
   try {
     const capture = getActivityCaptureManager();
-    capture.stop();
+    capture.stopSync();
   } catch {
     // 采集停止失败不影响退出
   }

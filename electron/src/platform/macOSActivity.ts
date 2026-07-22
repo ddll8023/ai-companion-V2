@@ -220,24 +220,15 @@ export async function checkAccessibilityPermission(): Promise<PermissionStatusTy
 /**
  * 检测 macOS Screen Recording 权限状态。
  *
- * 屏幕录制权限用于获取前台应用窗口标题（较新的 macOS 版本上）。
- * 通过尝试获取窗口标题的二进制像素数据来检测。
- * 由于本产品首版不采集屏幕截图，此权限主要用于判断能力状态。
+ * 首版不采集屏幕截图，不进行真实权限检测。
+ * 实际获取窗口标题依赖的是 Accessibility 权限，而非 Screen Recording。
+ *
+ * 返回 NOT_IMPLEMENTED 表明产品暂未接入该能力，与首版范围一致。
+ * 后续版本如需屏幕截图功能，应使用原生调用（CGDisplayStream / SCStream）
+ * 或通过 macOS 授权对话框 API 进行真实检测。
  */
 export async function checkScreenRecordingPermission(): Promise<PermissionStatusType> {
-  try {
-    // 尝试获取前台应用窗口信息，如果时区/权限不满足，macOS 会返回错误
-    // 这里借用 Accessibility 检测的类似方法
-    const script = `
-      tell application "System Events"
-        get name of first process whose frontmost is true
-      end tell
-    `;
-    await execCommand(`osascript -e '${script.replace(/'/g, "'\\''")}'`, 3000);
-    return PermissionStatus.AVAILABLE;
-  } catch {
-    return PermissionStatus.PENDING_AUTH;
-  }
+  return PermissionStatus.NOT_IMPLEMENTED;
 }
 
 /**
@@ -269,7 +260,6 @@ export async function getAllMacOSCapabilities(): Promise<
   }>
 > {
   const accessibilityStatus = await checkAccessibilityPermission();
-  const screenRecordingStatus = await checkScreenRecordingPermission();
 
   return [
     {
@@ -294,9 +284,9 @@ export async function getAllMacOSCapabilities(): Promise<
     },
     {
       name: 'screen_recording',
-      status: screenRecordingStatus,
+      status: PermissionStatus.NOT_IMPLEMENTED,
       label: '屏幕录制',
-      description: '屏幕截图和录制',
+      description: '首版不采集屏幕截图，此能力暂未实现',
     },
     {
       name: 'notification',
