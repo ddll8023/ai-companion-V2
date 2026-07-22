@@ -208,3 +208,112 @@ export interface ElectronAPI {
   onBackendStatus: (callback: (status: { ready: boolean }) => void) => void
   removeBackendStatusListener: () => void
 }
+
+// ── 目标与任务类型 ──────────────────────────────────────────────────────────
+
+/** 目标 */
+export interface Goal {
+  id: number
+  title: string
+  description: string | null
+  status: number
+  target_date: string | null
+  progress: number
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 创建目标请求 */
+export interface GoalCreate {
+  title: string
+  description?: string
+  target_date?: string
+}
+
+/** 更新目标请求 */
+export interface GoalUpdate {
+  title?: string
+  description?: string
+  status?: number
+  target_date?: string
+}
+
+/** 目标列表查询参数 */
+export interface GoalListQuery {
+  status?: number
+  keyword?: string
+  page?: number
+  page_size?: number
+}
+
+/** 任务 */
+export interface Task {
+  id: number
+  goal_id: number | null
+  title: string
+  description: string | null
+  status: number
+  priority: number
+  is_from_suggestion: number
+  suggestion_status: number
+  suggestion_data: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 任务（含关联目标标题） */
+export interface TaskWithGoal {
+  id: number
+  goal_id: number | null
+  goal_title: string | null
+  title: string
+  description: string | null
+  status: number
+  priority: number
+  is_from_suggestion: number
+  suggestion_status: number
+  suggestion_data: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 创建任务请求 */
+export interface TaskCreate {
+  goal_id?: number | null
+  title: string
+  description?: string
+  priority?: number
+}
+
+/** 更新任务请求 */
+export interface TaskUpdate {
+  title?: string
+  description?: string
+  status?: number
+  priority?: number
+  goal_id?: number | null
+}
+
+/** 任务列表查询参数 */
+export interface TaskListQuery {
+  goal_id?: number
+  status?: number
+  suggestion_status?: number
+  is_suggestion?: number
+  keyword?: string
+  page?: number
+  page_size?: number
+}
+
+/** 创建 AI 建议任务请求 */
+export interface TaskSuggestionCreate {
+  title: string
+  description?: string
+  priority?: number
+  suggestion_data?: string
+}
+
+/** 目标详情（含关联任务） */
+export interface GoalDetail {
+  goal: Goal
+  tasks: Task[]
