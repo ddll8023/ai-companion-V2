@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import date, datetime, timedelta
 
 from sqlalchemy import and_, desc, func, or_, select
@@ -137,11 +138,62 @@ def _process_single_event(db: Session, event: ActivityEvent) -> None:
 
 def _generate_source_id(event: ActivityEvent) -> str:
     """为没有 source_id 的事件生成去重标识。"""
-    raw = f"{event.app_name}|{event.started_at.isoformat()}|{event.platform}"
+    raw = (
+        f"{event.app_name}|{event.started_at.isoformat()}|{event.platform}"
+        f"|{event.window_title or ''}|{event.duration_seconds or ''}"
+    )
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
 # ── 隐私规则引擎 ────────────────────────────────────────────────────────────────
+
+
+def _deactivate_expired_temp_pauses(
+    db: Session,
+    rules: list[PrivacyRule],
+) -> None:
+    """检查并自动禁用已过期的 temp_pause 规则。
+
+    将 temp_pause 的过期检测从 _evaluate_single_rule 中分离出来，
+    确保过期规则的禁用状态能被持久化。
+    """
+    modified = False
+    for rule in rules:
+        if rule.rule_type != "temp_pause":
+            continue
+        try:
+            pause_config = json.loads(rule.rule_value)
+            pause_until = pause_config.get("pause_until")
+            if pause_until:
+                until_time = datetime.fromisoformat(pause_until)
+                if datetime.now() >= until_time:
+                    rule.is_active = 0
+                    modified = True
+                    logger.info(f"临时暂停规则已过期，自动禁用: rule_id={rule.id}")
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+    if modified:
+        db.flush()
+
+
+def _collect_whitelist_values(
+    rules: list[PrivacyRule],
+) -> list[str] | None:
+    """收集所有白名单规则的值。
+
+    白名单是集合性规则，需要收集所有同类型规则的值才能做包含判断。
+    返回 None 表示没有配置白名单规则（即不启用白名单模式）。
+    返回非空列表表示启用了白名单模式，只有列表中的应用才允许采集。
+    """
+    values: list[str] = []
+    for rule in rules:
+        if rule.rule_type == "app_whitelist":
+            for line in rule.rule_value.strip().split("\n"):
+                line = line.strip()
+                if line:
+                    values.append(line)
+    return values if values else None
 
 
 def _evaluate_privacy(
@@ -149,6 +201,11 @@ def _evaluate_privacy(
     req: PrivacyEvaluateRequest,
 ) -> PrivacyEvaluateResult:
     """隐私规则引擎：按优先级评估给定事件是否允许采集。
+
+    评估流程：
+    1. 先处理 temp_pause 过期自动禁用（持久化 side effect）
+    2. 白名单模式统一判断（集合性规则）
+    3. 其余规则按优先级逐条评估（首次命中即返回）
 
     Args:
         db: 数据库会话
@@ -168,8 +225,25 @@ def _evaluate_privacy(
         # 没有配置规则时默认允许
         return PrivacyEvaluateResult(allowed=True, action="allowed")
 
-    # 按规则类型分组检查
+    # 1. 处理 temp_pause 规则过期自动禁用
+    _deactivate_expired_temp_pauses(db, rules)
+
+    # 2. 白名单是集合性规则：先收集所有白名单条目，再统一判断
+    whitelist_values = _collect_whitelist_values(rules)
+    if whitelist_values is not None:
+        # 白名单模式启用时，只有白名单中的应用才允许被采集
+        app_name_lower = req.app_name.lower()
+        if not any(app_name_lower == wl.lower() for wl in whitelist_values):
+            return PrivacyEvaluateResult(
+                allowed=False,
+                action="blocked",
+                reason=f"应用不在白名单中: {req.app_name}",
+            )
+
+    # 3. 其余按优先级逐条评估（首次命中即返回）
     for rule in rules:
+        if rule.rule_type == "app_whitelist":
+            continue  # 白名单已在上面统一处理
         result = _evaluate_single_rule(rule, req)
         if result is not None:
             return result
@@ -235,17 +309,21 @@ def _evaluate_single_rule(
                 logger.warning(f"time_based 规则值解析失败: {rule_value}")
 
         elif rule.rule_type == "content_masking":
-            # 内容脱敏：如果应用名或窗口标题包含关键词，进行脱敏
+            # 内容脱敏：使用大小写不敏感替换
+            if not rule_value:
+                return None
             masked_app = None
             masked_title = None
             if req.app_name and rule_value.lower() in req.app_name.lower():
-                masked_app = req.app_name.replace(
-                    rule_value, "***", 1,
-                ) if rule_value else f"{req.app_name[:2]}***"
+                masked_app = re.sub(
+                    re.escape(rule_value), "***", req.app_name,
+                    count=1, flags=re.IGNORECASE,
+                )
             if req.window_title and rule_value.lower() in req.window_title.lower():
-                masked_title = req.window_title.replace(
-                    rule_value, "***", 1,
-                ) if rule_value else f"{req.window_title[:2]}***"
+                masked_title = re.sub(
+                    re.escape(rule_value), "***", req.window_title,
+                    count=1, flags=re.IGNORECASE,
+                )
             if masked_app or masked_title:
                 return PrivacyEvaluateResult(
                     allowed=True,
@@ -270,9 +348,7 @@ def _evaluate_single_rule(
                             reason=f"临时暂停中，直到 {pause_until}",
                             matched_rule_id=rule.id,
                         )
-                    else:
-                        # 暂停已过期，自动禁用该规则
-                        rule.is_active = 0
+                    # 过期规则由 _deactivate_expired_temp_pauses 统一处理，不在评估中修改
             except (json.JSONDecodeError, ValueError):
                 logger.warning(f"temp_pause 规则值解析失败: {rule_value}")
 
