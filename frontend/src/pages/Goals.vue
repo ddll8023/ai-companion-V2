@@ -297,6 +297,15 @@
             />
           </div>
 
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-text mb-1">目标日期</label>
+            <input
+              v-model="goalForm.target_date"
+              type="date"
+              class="w-full px-3 py-2 text-sm border border-border rounded-lg bg-bg text-text focus:outline-none focus:border-primary"
+            />
+          </div>
+
           <div v-if="editingGoal" class="mb-4">
             <label class="block text-sm font-medium text-text mb-1">状态</label>
             <select
@@ -405,17 +414,61 @@
       </div>
     </Transition>
 
-    <!-- ──── 删除确认对话框 ──── -->
-    <ConfirmDialog
-      :visible="showDeleteGoalDialog"
-      title="确认删除目标"
-      :message="deleteGoalTarget ? `确定删除目标「${deleteGoalTarget.title}」吗？关联任务将变为独立任务。` : ''"
-      confirm-text="删除"
-      cancel-text="取消"
-      :danger="true"
-      @confirm="confirmDeleteGoal"
-      @cancel="showDeleteGoalDialog = false"
-    />
+    <!-- ──── 删除目标确认对话框 ──── -->
+    <Transition name="fade">
+      <div
+        v-if="showDeleteGoalDialog"
+        class="fixed inset-0 z-50 flex items-center justify-center bg-black/30"
+        @click.self="showDeleteGoalDialog = false"
+      >
+        <div class="w-[28rem] p-5 bg-surface rounded-xl border border-border shadow-lg">
+          <h3 class="text-base font-medium text-text mb-3">确认删除目标</h3>
+          <p class="text-sm text-text-secondary mb-4">
+            确定删除目标「<strong>{{ deleteGoalTarget?.title }}</strong>」吗？
+          </p>
+
+          <div class="mb-4 p-3 bg-hover rounded-lg">
+            <label class="block text-sm font-medium text-text mb-2">关联任务处理方式</label>
+            <div class="flex items-center gap-4">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  v-model="deleteGoalAction"
+                  value="unlink"
+                  class="accent-primary"
+                />
+                <span class="text-sm text-text">解除关联（任务保留为独立任务）</span>
+              </label>
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  v-model="deleteGoalAction"
+                  value="cascade"
+                  class="accent-primary"
+                />
+                <span class="text-sm text-text">级联删除（同时删除关联任务）</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-3">
+            <button
+              class="px-4 py-2 text-sm font-medium text-white bg-error rounded-lg hover:bg-error/90 transition-colors"
+              :disabled="actionLoading === deleteGoalTarget?.id"
+              @click="confirmDeleteGoal"
+            >
+              删除
+            </button>
+            <button
+              class="px-4 py-2 text-sm font-medium text-text-secondary bg-hover rounded-lg hover:text-text transition-colors"
+              @click="showDeleteGoalDialog = false"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
     <ConfirmDialog
       :visible="showDeleteTaskDialog"
       title="确认删除任务"
@@ -482,6 +535,7 @@ const goalForm = ref({
   title: '',
   description: '',
   status: 0,
+  target_date: '',
 })
 
 // ── 任务对话框 ──
@@ -499,6 +553,7 @@ const taskGoalId = ref<number | null>(null)
 // ── 删除确认 ──
 const showDeleteGoalDialog = ref(false)
 const deleteGoalTarget = ref<Goal | null>(null)
+const deleteGoalAction = ref('unlink')
 const showDeleteTaskDialog = ref(false)
 const deleteTaskTarget = ref<Task | null>(null)
 
@@ -580,7 +635,7 @@ async function toggleGoalExpand(goalId: number) {
 // ── 目标 CRUD ──
 function openCreateGoal() {
   editingGoal.value = null
-  goalForm.value = { title: '', description: '', status: 0 }
+  goalForm.value = { title: '', description: '', status: 0, target_date: '' }
   goalDialogVisible.value = true
 }
 
@@ -590,6 +645,7 @@ function openEditGoal(goal: Goal) {
     title: goal.title,
     description: goal.description || '',
     status: goal.status,
+    target_date: goal.target_date ? goal.target_date.slice(0, 10) : '',
   }
   goalDialogVisible.value = true
 }
@@ -607,11 +663,13 @@ async function handleSaveGoal() {
         title: goalForm.value.title,
         description: goalForm.value.description || undefined,
         status: goalForm.value.status,
+        target_date: goalForm.value.target_date ? goalForm.value.target_date + 'T00:00:00' : undefined,
       })
     } else {
       await goalApi.createGoal({
         title: goalForm.value.title,
         description: goalForm.value.description || undefined,
+        target_date: goalForm.value.target_date ? goalForm.value.target_date + 'T00:00:00' : undefined,
       })
     }
     closeGoalDialog()
@@ -625,6 +683,7 @@ async function handleSaveGoal() {
 
 function handleDeleteGoal(goal: Goal) {
   deleteGoalTarget.value = goal
+  deleteGoalAction.value = 'unlink'
   showDeleteGoalDialog.value = true
 }
 
@@ -632,7 +691,7 @@ async function confirmDeleteGoal() {
   if (!deleteGoalTarget.value) return
   actionLoading.value = deleteGoalTarget.value.id
   try {
-    await goalApi.deleteGoal(deleteGoalTarget.value.id, 'unlink')
+    await goalApi.deleteGoal(deleteGoalTarget.value.id, deleteGoalAction.value)
     await fetchGoals()
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '删除目标失败'

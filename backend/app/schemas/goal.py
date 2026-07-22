@@ -3,23 +3,24 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import IntEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
-# ========== 辅助类（Support）==========
+# ========== 枚举（Enums）==========
 
 
-class GoalStatus:
-    """目标状态常量。"""
+class GoalStatus(IntEnum):
+    """目标状态。"""
 
     ACTIVE = 0
     COMPLETED = 1
     ABANDONED = 2
 
 
-class TaskStatus:
-    """任务状态常量。"""
+class TaskStatus(IntEnum):
+    """任务状态。"""
 
     PENDING = 0
     IN_PROGRESS = 1
@@ -27,8 +28,8 @@ class TaskStatus:
     ABANDONED = 3
 
 
-class TaskPriority:
-    """任务优先级常量。"""
+class TaskPriority(IntEnum):
+    """任务优先级。"""
 
     NONE = 0
     LOW = 1
@@ -37,8 +38,8 @@ class TaskPriority:
     URGENT = 4
 
 
-class SuggestionStatus:
-    """建议状态常量。"""
+class SuggestionStatus(IntEnum):
+    """建议状态。"""
 
     NONE = 0
     PENDING = 1

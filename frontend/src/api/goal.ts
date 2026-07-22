@@ -20,7 +20,7 @@ export async function listGoals(query: GoalListQuery) {
 
 /** 获取目标详情（含关联任务） */
 export async function getGoal(id: number) {
-  return adapter.get<GoalDetail>(`/api/v1/goals/${id}`)
+  return adapter.post<GoalDetail>(`/api/v1/goals/${id}/detail`)
 }
 
 /** 更新目标 */
@@ -30,7 +30,7 @@ export async function updateGoal(id: number, data: GoalUpdate) {
 
 /** 删除目标 */
 export async function deleteGoal(id: number, taskAction = 'unlink') {
-  return adapter.delete(`/api/v1/goals/${id}?task_action=${taskAction}`)
+  return adapter.post(`/api/v1/goals/${id}/delete`, { task_action: taskAction })
 }
 
 // ── 任务 API ─────────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ export async function listTasks(query: TaskListQuery) {
 
 /** 获取任务详情 */
 export async function getTask(id: number) {
-  return adapter.get<TaskWithGoal>(`/api/v1/goals/tasks/${id}`)
+  return adapter.post<TaskWithGoal>(`/api/v1/goals/tasks/${id}/detail`)
 }
 
 /** 更新任务 */
@@ -60,7 +60,7 @@ export async function updateTask(id: number, data: TaskUpdate) {
 
 /** 删除任务 */
 export async function deleteTask(id: number) {
-  return adapter.delete(`/api/v1/goals/tasks/${id}`)
+  return adapter.post(`/api/v1/goals/tasks/${id}/delete`)
 }
 
 // ── AI 建议 API ──────────────────────────────────────────────────────────────

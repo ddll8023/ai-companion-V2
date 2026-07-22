@@ -59,7 +59,7 @@ def list_goals(
         return error(code=e.code, message=e.message)
 
 
-@router.get("/{goal_id}", response_model=ApiResponse[GoalDetailResponse])
+@router.post("/{goal_id}/detail", response_model=ApiResponse[GoalDetailResponse])
 def get_goal(
     goal_id: int,
     db: Annotated[Session, Depends(get_db)],
@@ -86,11 +86,11 @@ def update_goal(
         return error(code=e.code, message=e.message)
 
 
-@router.delete("/{goal_id}", response_model=ApiResponse[dict])
+@router.post("/{goal_id}/delete", response_model=ApiResponse[dict])
 def delete_goal(
     goal_id: int,
+    body: GoalDeleteRequest,
     db: Annotated[Session, Depends(get_db)],
-    task_action: str = "unlink",
 ):
     """删除目标。
 
@@ -98,8 +98,7 @@ def delete_goal(
         task_action: 关联任务处理方式，unlink=解除关联，cascade=级联删除
     """
     try:
-        data = GoalDeleteRequest(task_action=task_action)
-        result = services_goal.delete_goal(db, goal_id, data)
+        result = services_goal.delete_goal(db, goal_id, body)
         return success(data=result, message="目标已删除")
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -134,7 +133,7 @@ def list_tasks(
         return error(code=e.code, message=e.message)
 
 
-@router.get("/tasks/{task_id}", response_model=ApiResponse[TaskWithGoalResponse])
+@router.post("/tasks/{task_id}/detail", response_model=ApiResponse[TaskWithGoalResponse])
 def get_task(
     task_id: int,
     db: Annotated[Session, Depends(get_db)],
@@ -161,7 +160,7 @@ def update_task(
         return error(code=e.code, message=e.message)
 
 
-@router.delete("/tasks/{task_id}", response_model=ApiResponse[dict])
+@router.post("/tasks/{task_id}/delete", response_model=ApiResponse[dict])
 def delete_task(
     task_id: int,
     db: Annotated[Session, Depends(get_db)],

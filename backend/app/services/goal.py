@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import math
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, case, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.database import commit_or_rollback
@@ -43,7 +43,7 @@ logger = setup_logger(__name__)
 # ── 目标 CRUD ────────────────────────────────────────────────────────────────
 
 
-def create_goal(db: Session, data: GoalCreate) -> GoalResponse:
+def create_goal(db: Session, data: GoalCreate):
     """创建目标。"""
     goal = Goal(
         title=data.title,
@@ -66,7 +66,7 @@ def create_goal(db: Session, data: GoalCreate) -> GoalResponse:
     return _build_goal_response(db, goal)
 
 
-def query_goals(db: Session, query: GoalListQuery) -> PaginatedResponse[GoalResponse]:
+def query_goals(db: Session, query: GoalListQuery):
     """查询目标列表。"""
     base_stmt = select(Goal)
 
@@ -89,8 +89,11 @@ def query_goals(db: Session, query: GoalListQuery) -> PaginatedResponse[GoalResp
         ).all()
     )
 
+    # 批量计算所有目标的进度统计数据，避免 N+1
+    stats_map = _compute_goal_stats(db, [g.id for g in items])
+
     return PaginatedResponse(
-        lists=[_build_goal_response(db, g) for g in items],
+        lists=[_build_goal_response(db, g, stats_map) for g in items],
         pagination=PaginationInfo(
             page=query.page,
             page_size=query.page_size,
@@ -100,7 +103,7 @@ def query_goals(db: Session, query: GoalListQuery) -> PaginatedResponse[GoalResp
     )
 
 
-def get_goal(db: Session, goal_id: int) -> GoalDetailResponse:
+def get_goal(db: Session, goal_id: int):
     """获取目标详情（含关联任务）。"""
     goal = _get_goal_or_error(db, goal_id)
 
@@ -121,7 +124,7 @@ def get_goal(db: Session, goal_id: int) -> GoalDetailResponse:
     )
 
 
-def update_goal(db: Session, goal_id: int, data: GoalUpdate) -> GoalResponse:
+def update_goal(db: Session, goal_id: int, data: GoalUpdate):
     """更新目标。"""
     goal = _get_goal_or_error(db, goal_id)
 
@@ -146,7 +149,7 @@ def update_goal(db: Session, goal_id: int, data: GoalUpdate) -> GoalResponse:
     return _build_goal_response(db, goal)
 
 
-def delete_goal(db: Session, goal_id: int, data: GoalDeleteRequest) -> dict:
+def delete_goal(db: Session, goal_id: int, data: GoalDeleteRequest):
     """删除目标。
 
     根据 task_action 处理关联任务：
@@ -191,7 +194,7 @@ def delete_goal(db: Session, goal_id: int, data: GoalDeleteRequest) -> dict:
 # ── 任务 CRUD ────────────────────────────────────────────────────────────────
 
 
-def create_task(db: Session, data: TaskCreate) -> TaskResponse:
+def create_task(db: Session, data: TaskCreate):
     """创建任务（手动创建）。"""
     if data.goal_id:
         goal = db.get(Goal, data.goal_id)
@@ -252,14 +255,17 @@ def query_tasks(
         ).all()
     )
 
+    # 批量获取关联目标标题，避免 N+1
+    goal_ids = {t.goal_id for t in items if t.goal_id}
+    goals_map = {}
+    if goal_ids:
+        goal_entities = db.scalars(select(Goal).where(Goal.id.in_(goal_ids))).all()
+        goals_map = {g.id: g.title for g in goal_entities}
+
     # 构建含目标标题的响应
     response_list = []
     for task in items:
-        goal_title = None
-        if task.goal_id:
-            goal = db.get(Goal, task.goal_id)
-            if goal:
-                goal_title = goal.title
+        goal_title = goals_map.get(task.goal_id) if task.goal_id else None
         task_resp = TaskWithGoalResponse(
             id=task.id,
             goal_id=task.goal_id,
@@ -287,7 +293,7 @@ def query_tasks(
     )
 
 
-def get_task(db: Session, task_id: int) -> TaskWithGoalResponse:
+def get_task(db: Session, task_id: int):
     """获取任务详情。"""
     task = _get_task_or_error(db, task_id)
 
@@ -313,7 +319,7 @@ def get_task(db: Session, task_id: int) -> TaskWithGoalResponse:
     )
 
 
-def update_task(db: Session, task_id: int, data: TaskUpdate) -> TaskResponse:
+def update_task(db: Session, task_id: int, data: TaskUpdate):
     """更新任务。"""
     task = _get_task_or_error(db, task_id)
 
@@ -344,7 +350,7 @@ def update_task(db: Session, task_id: int, data: TaskUpdate) -> TaskResponse:
     return TaskResponse.model_validate(task)
 
 
-def delete_task(db: Session, task_id: int) -> dict:
+def delete_task(db: Session, task_id: int):
     """删除任务（硬删除）。"""
     task = _get_task_or_error(db, task_id)
 
@@ -366,7 +372,7 @@ def delete_task(db: Session, task_id: int) -> dict:
 # ── AI 建议管理 ──────────────────────────────────────────────────────────────
 
 
-def create_suggestion(db: Session, data: TaskSuggestionCreate) -> TaskResponse:
+def create_suggestion(db: Session, data: TaskSuggestionCreate):
     """创建 AI 建议任务。"""
     task = Task(
         goal_id=None,
@@ -393,7 +399,7 @@ def create_suggestion(db: Session, data: TaskSuggestionCreate) -> TaskResponse:
     return TaskResponse.model_validate(task)
 
 
-def accept_suggestion(db: Session, task_id: int) -> TaskResponse:
+def accept_suggestion(db: Session, task_id: int):
     """接受 AI 建议。
 
     将建议状态更新为 accepted，任务正式生效。
@@ -422,7 +428,7 @@ def accept_suggestion(db: Session, task_id: int) -> TaskResponse:
     return TaskResponse.model_validate(task)
 
 
-def reject_suggestion(db: Session, task_id: int) -> TaskResponse:
+def reject_suggestion(db: Session, task_id: int):
     """拒绝 AI 建议。
 
     标记为 rejected，后续不再作为正式任务引用。
@@ -453,7 +459,7 @@ def reject_suggestion(db: Session, task_id: int) -> TaskResponse:
 # ── 对话引用 ──────────────────────────────────────────────────────────────────
 
 
-def query_active_goals_for_chat(db: Session) -> list[GoalResponse]:
+def query_active_goals_for_chat(db: Session):
     """查询有效的目标列表（供对话上下文使用）。
 
     只返回状态为 active 的目标。
@@ -464,10 +470,11 @@ def query_active_goals_for_chat(db: Session) -> list[GoalResponse]:
         .order_by(desc(Goal.created_at))
     ).all()
 
-    return [_build_goal_response(db, g) for g in items]
+    stats_map = _compute_goal_stats(db, [g.id for g in items])
+    return [_build_goal_response(db, g, stats_map) for g in items]
 
 
-def query_active_tasks_for_chat(db: Session, goal_id: int | None = None) -> list[TaskResponse]:
+def query_active_tasks_for_chat(db: Session, goal_id: int | None = None):
     """查询有效的任务列表（供对话上下文使用）。
 
     只返回已接受的任务（非建议、已接受的建议）。
@@ -488,10 +495,34 @@ def query_active_tasks_for_chat(db: Session, goal_id: int | None = None) -> list
     return [TaskResponse.model_validate(t) for t in items]
 
 
-# ── 辅助函数 ──────────────────────────────────────────────────────────────────
+"""辅助函数"""
 
 
-def _get_goal_or_error(db: Session, goal_id: int) -> Goal:
+def _compute_goal_stats(db: Session, goal_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """批量计算目标的任务进度统计数据。
+
+    返回 {goal_id: (total, completed)} 映射。
+    """
+    if not goal_ids:
+        return {}
+
+    rows = db.execute(
+        select(
+            Task.goal_id,
+            func.count().label("total"),
+            func.sum(case((Task.status == TaskStatus.COMPLETED, 1), else_=0)).label("completed"),
+        ).where(
+            and_(
+                Task.goal_id.in_(goal_ids),
+                Task.suggestion_status != SuggestionStatus.REJECTED,
+            )
+        ).group_by(Task.goal_id)
+    ).all()
+
+    return {row.goal_id: (row.total, row.completed) for row in rows}
+
+
+def _get_goal_or_error(db: Session, goal_id: int):
     """获取目标实体，不存在时抛出异常。"""
     goal = db.get(Goal, goal_id)
     if goal is None:
@@ -499,7 +530,7 @@ def _get_goal_or_error(db: Session, goal_id: int) -> Goal:
     return goal
 
 
-def _get_task_or_error(db: Session, task_id: int) -> Task:
+def _get_task_or_error(db: Session, task_id: int):
     """获取任务实体，不存在时抛出异常。"""
     task = db.get(Task, task_id)
     if task is None:
@@ -507,31 +538,39 @@ def _get_task_or_error(db: Session, task_id: int) -> Task:
     return task
 
 
-def _build_goal_response(db: Session, goal: Goal) -> GoalResponse:
+def _build_goal_response(
+    db: Session,
+    goal: Goal,
+    stats_map: dict[int, tuple[int, int]] | None = None,
+):
     """构建目标响应（含进度计算）。
 
     进度 = 已完成任务数 / 非拒绝状态的任务总数 * 100
+    支持通过 stats_map 避免 N+1 查询。
     """
-    total = db.scalar(
-        select(func.count())
-        .where(
-            and_(
-                Task.goal_id == goal.id,
-                Task.suggestion_status != SuggestionStatus.REJECTED,
+    if stats_map and goal.id in stats_map:
+        total, completed = stats_map[goal.id]
+    else:
+        total = db.scalar(
+            select(func.count())
+            .where(
+                and_(
+                    Task.goal_id == goal.id,
+                    Task.suggestion_status != SuggestionStatus.REJECTED,
+                )
             )
-        )
-    ) or 0
+        ) or 0
 
-    completed = db.scalar(
-        select(func.count())
-        .where(
-            and_(
-                Task.goal_id == goal.id,
-                Task.status == TaskStatus.COMPLETED,
-                Task.suggestion_status != SuggestionStatus.REJECTED,
+        completed = db.scalar(
+            select(func.count())
+            .where(
+                and_(
+                    Task.goal_id == goal.id,
+                    Task.status == TaskStatus.COMPLETED,
+                    Task.suggestion_status != SuggestionStatus.REJECTED,
+                )
             )
-        )
-    ) or 0
+        ) or 0
 
     progress = int((completed / total) * 100) if total > 0 else 0
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, SmallInteger, String, Text, func
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, SmallInteger, String, Text, func
 
 from app.core.database import Base
 
@@ -17,21 +17,21 @@ class Goal(Base):
 
     __tablename__ = "goals"
 
-    id = Column(Integer, primary_key=True, autoincrement=True, comment="主键 ID")
-    title = Column(String(256), nullable=False, comment="目标标题")
-    description = Column(Text, nullable=True, comment="目标描述")
-    status = Column(
+    id = Column[BigInteger](BigInteger, primary_key=True, autoincrement=True, comment="主键 ID")
+    title = Column[str](String(256), nullable=False, comment="目标标题")
+    description = Column[str](Text, nullable=True, comment="目标描述")
+    status = Column[int](
         SmallInteger,
         nullable=False,
         default=0,
         index=True,
         comment="状态: 0=进行中, 1=已完成, 2=已放弃",
     )
-    target_date = Column(DateTime, nullable=True, comment="目标完成日期")
-    created_at = Column(
+    target_date = Column[datetime](DateTime, nullable=True, comment="目标完成日期")
+    created_at = Column[datetime](
         DateTime, server_default=func.now(), nullable=False, comment="创建时间",
     )
-    updated_at = Column(
+    updated_at = Column[datetime](
         DateTime,
         server_default=func.now(),
         onupdate=func.now(),
@@ -53,51 +53,51 @@ class Task(Base):
 
     __tablename__ = "tasks"
 
-    id = Column(Integer, primary_key=True, autoincrement=True, comment="主键 ID")
-    goal_id = Column(
-        Integer,
+    id = Column[BigInteger](BigInteger, primary_key=True, autoincrement=True, comment="主键 ID")
+    goal_id = Column[int](
+        BigInteger,
         ForeignKey("goals.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
         comment="关联目标 ID",
     )
-    title = Column(String(256), nullable=False, comment="任务标题")
-    description = Column(Text, nullable=True, comment="任务描述")
-    status = Column(
+    title = Column[str](String(256), nullable=False, comment="任务标题")
+    description = Column[str](Text, nullable=True, comment="任务描述")
+    status = Column[int](
         SmallInteger,
         nullable=False,
         default=0,
         index=True,
         comment="状态: 0=待处理, 1=进行中, 2=已完成, 3=已放弃",
     )
-    priority = Column(
+    priority = Column[int](
         SmallInteger,
         nullable=False,
         default=0,
         comment="优先级: 0=无, 1=低, 2=中, 3=高, 4=紧急",
     )
-    is_from_suggestion = Column(
+    is_from_suggestion = Column[int](
         SmallInteger,
         nullable=False,
         default=0,
         comment="是否来自 AI 建议: 0=否, 1=是",
     )
-    suggestion_status = Column(
+    suggestion_status = Column[int](
         SmallInteger,
         nullable=False,
         default=0,
         index=True,
         comment="建议状态: 0=无, 1=待确认, 2=已接受, 3=已拒绝",
     )
-    suggestion_data = Column(
+    suggestion_data = Column[str](
         Text,
         nullable=True,
         comment="原始建议数据（JSON 字符串，含建议理由等）",
     )
-    created_at = Column(
+    created_at = Column[datetime](
         DateTime, server_default=func.now(), nullable=False, comment="创建时间",
     )
-    updated_at = Column(
+    updated_at = Column[datetime](
         DateTime,
         server_default=func.now(),
         onupdate=func.now(),
