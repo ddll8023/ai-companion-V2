@@ -26,9 +26,10 @@ _VERSION_TABLE = "_db_version"
 #   v3 — 未记录变更
 #   v4 — 未记录变更
 #   v5 — 添加: memories, memory_sources, memory_revisions
+#   v6 — 添加: memory_references, memories_fts (FTS5 虚拟表)
 #
 # 注意: 开发阶段版本不匹配时会清空数据重建，生产阶段需实现逐版本迁移。
-_CURRENT_VERSION: int = 5
+_CURRENT_VERSION: int = 6
 
 
 def _ensure_version_table(db: Session):
@@ -60,6 +61,34 @@ def _set_db_version(db: Session, version: int):
     db.commit()
 
 
+def _ensure_fts5_table(db: Session):
+    """创建 FTS5 虚拟表（如不存在）并重建索引。
+
+    FTS5 用于记忆全文检索，不通过 SQLAlchemy ORM 管理。
+    """
+    try:
+        # 创建 FTS5 表
+        # content 列用于搜索, memory_id 和 type 为 unindexed 辅助列
+        db.execute(text(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts "
+            "USING fts5(content, memory_id UNINDEXED, type UNINDEXED)"
+        ))
+        db.commit()
+
+        # 重建索引：清除后从已确认的记忆中重新插入
+        db.execute(text("DELETE FROM memories_fts"))
+        db.commit()
+        db.execute(text(
+            "INSERT INTO memories_fts (content, memory_id, type) "
+            "SELECT content, id, type FROM memories "
+            "WHERE status IN ('confirmed', 'corrected')"
+        ))
+        db.commit()
+        logger.info("FTS5 索引已重建")
+    except Exception as exc:
+        logger.warning(f"FTS5 表创建失败（检索功能降级）: {exc}")
+
+
 def ensure_schema(db: Session, base_metadata, db_file_path: str):
     """确保数据库 schema 与当前模型定义一致。
 
@@ -82,6 +111,7 @@ def ensure_schema(db: Session, base_metadata, db_file_path: str):
     if is_new:
         logger.info("新数据库，创建所有表")
         base_metadata.create_all(bind=db.get_bind())
+        _ensure_fts5_table(db)
         _set_db_version(db, _CURRENT_VERSION)
         logger.info(f"数据库初始化完成，版本 v{_CURRENT_VERSION}")
         return True
@@ -93,6 +123,7 @@ def ensure_schema(db: Session, base_metadata, db_file_path: str):
         # 版本匹配但仍需执行 create_all 以发现新增模型表
         # create_all 是幂等操作，不会重建已存在的表
         base_metadata.create_all(bind=db.get_bind())
+        _ensure_fts5_table(db)
         logger.info("数据库版本匹配，已同步新增表（如有）")
         return True
 
@@ -109,6 +140,7 @@ def ensure_schema(db: Session, base_metadata, db_file_path: str):
     )
     base_metadata.drop_all(bind=db.get_bind())
     base_metadata.create_all(bind=db.get_bind())
+    _ensure_fts5_table(db)
     _set_db_version(db, _CURRENT_VERSION)
     logger.info(f"数据库重建完成，版本 v{_CURRENT_VERSION}")
     return True

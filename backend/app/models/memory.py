@@ -134,3 +134,36 @@ class MemoryRevision(Base):
             f"<MemoryRevision(id={self.id}, memory_id={self.memory_id}, "
             f"changed_by='{self.changed_by}')>"
         )
+
+
+class MemoryReference(Base):
+    """记忆引用表。
+
+    记录每条助手消息实际引用了哪些记忆，用于追溯和审计。
+    """
+
+    __tablename__ = "memory_references"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, comment="主键 ID")
+    message_id = Column(
+        Integer,
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+        comment="关联消息 ID（助手回复）",
+    )
+    memory_id = Column(
+        Integer,
+        ForeignKey("memories.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="关联记忆 ID",
+    )
+    memory_content_preview = Column(String(256), nullable=True, comment="记忆内容预览（前 N 字符）")
+    relevance_score = Column(Integer, nullable=True, comment="相关度分数 0-100")
+    rank = Column(Integer, nullable=True, comment="在检索结果中的排名")
+    created_at = Column(
+        DateTime, server_default=func.now(), nullable=False, comment="创建时间",
+    )
+
+    def __repr__(self):
+        return f"<MemoryReference(id={self.id}, message_id={self.message_id}, memory_id={self.memory_id})>"

@@ -13,12 +13,12 @@ import hashlib
 import math
 from datetime import datetime
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select, text
 from sqlalchemy.orm import Session
 
 from app.core.database import commit_or_rollback
 from app.models.chat import Message
-from app.models.memory import Memory, MemoryRevision, MemorySource
+from app.models.memory import Memory, MemoryReference, MemoryRevision, MemorySource
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.schemas.memory import (
     MemoryCorrect,
@@ -166,6 +166,9 @@ def confirm_memory(db: Session, memory_id: int) -> MemoryResponse:
     commit_or_rollback(db)
     logger.info(f"确认记忆: id={memory_id}")
 
+    # 同步到 FTS5 索引
+    _sync_memory_to_fts(db, memory)
+
     record_audit(
         db=db,
         action="memory.confirm",
@@ -212,6 +215,9 @@ def correct_memory(db: Session, memory_id: int, data: MemoryCorrect) -> MemoryRe
     commit_or_rollback(db)
     logger.info(f"纠正记忆: id={memory_id}, version={memory.version}")
 
+    # 同步到 FTS5 索引（更新内容）
+    _sync_memory_to_fts(db, memory)
+
     record_audit(
         db=db,
         action="memory.correct",
@@ -240,6 +246,9 @@ def reject_memory(db: Session, memory_id: int) -> MemoryResponse:
     commit_or_rollback(db)
     logger.info(f"否定记忆: id={memory_id}")
 
+    # 从 FTS5 索引中移除
+    _sync_memory_to_fts(db, memory)
+
     record_audit(
         db=db,
         action="memory.reject",
@@ -258,6 +267,16 @@ def delete_memory(db: Session, memory_id: int) -> None:
     关联的 sources 和 revisions 通过 CASCADE 自动清理。
     """
     memory = _get_memory_or_error(db, memory_id)
+
+    # 从 FTS5 索引中移除（在删除前执行）
+    try:
+        db.execute(
+            text("DELETE FROM memories_fts WHERE memory_id = :mid"),
+            {"mid": memory_id},
+        )
+        db.commit()
+    except Exception as exc:
+        logger.warning(f"FTS5 索引删除失败: memory_id={memory_id}, error={exc}")
 
     # 记录审计（不含完整正文）
     record_audit(
@@ -322,6 +341,102 @@ def check_source_valid(
             return False
 
     return True
+
+
+# ── FTS5 索引同步 ────────────────────────────────────────────────────────────
+
+
+def _sync_memory_to_fts(db: Session, memory: Memory) -> None:
+    """同步单条记忆到 FTS5 索引。
+
+    先删除再插入，保证索引与记忆状态一致。
+    仅 confirmed/corrected 状态的记忆才会进入索引。
+
+    Args:
+        db: 数据库会话
+        memory: 记忆实体
+    """
+    try:
+        # 先删除旧索引
+        db.execute(
+            text("DELETE FROM memories_fts WHERE memory_id = :mid"),
+            {"mid": memory.id},
+        )
+
+        # 如果是 active 状态，插入新索引
+        if memory.status in ("confirmed", "corrected"):
+            db.execute(
+                text(
+                    "INSERT INTO memories_fts (content, memory_id, type) "
+                    "VALUES (:content, :mid, :type)"
+                ),
+                {
+                    "content": memory.content,
+                    "mid": memory.id,
+                    "type": memory.type,
+                },
+            )
+
+        db.commit()
+    except Exception as exc:
+        logger.warning(f"FTS5 索引同步失败（不影响主操作）: memory_id={memory.id}, error={exc}")
+
+
+def sync_memory_to_fts(db: Session, memory_id: int) -> None:
+    """同步记忆到 FTS5 索引的公共入口。
+
+    在确认、纠正、否定、删除记忆后调用。
+
+    Args:
+        db: 数据库会话
+        memory_id: 记忆 ID
+    """
+    memory = db.get(Memory, memory_id)
+    if memory is None:
+        return
+    _sync_memory_to_fts(db, memory)
+
+
+# ── 记忆引用跟踪 ─────────────────────────────────────────────────────────────
+
+
+def save_memory_references(
+    db: Session,
+    message_id: int,
+    memory_context,
+) -> int:
+    """保存助手消息引用的记忆记录。
+
+    在对话生成完成后调用，记录实际为对话上下文提供的记忆。
+
+    Args:
+        db: 数据库会话
+        message_id: 助手消息 ID
+        memory_context: 检索模块返回的 MemoryContext 对象
+
+    Returns:
+        保存的引用数量
+    """
+    if not memory_context or not memory_context.enabled:
+        return 0
+
+    count = 0
+    for i, mem in enumerate(memory_context.memories, start=1):
+        ref = MemoryReference(
+            message_id=message_id,
+            memory_id=mem.id,
+            memory_content_preview=mem.content[:200],
+            relevance_score=mem.relevance_score,
+            rank=i,
+        )
+        db.add(ref)
+        count += 1
+
+    if count > 0:
+        commit_or_rollback(db)
+        logger.info(f"保存记忆引用: message_id={message_id}, count={count}")
+
+    return count
 
 
 # ── 内部方法 ────────────────────────────────────────────────────────────────

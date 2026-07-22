@@ -26,6 +26,7 @@ from app.schemas.chat import MessageResponse, SessionCreate, SessionResponse, Se
 from app.schemas.common import ErrorCode
 from app.schemas.task import TaskCreate
 from app.services import model_provider
+from app.services import retrieval
 from app.services import task as services_task
 from app.services.audit import record_audit
 from app.utils.exception import ServiceException
@@ -229,6 +230,21 @@ def initialize_chat_stream(
     for msg in history_messages:
         model_messages.append({"role": msg.role, "content": msg.content})
 
+    # 检索相关长期记忆（个性化上下文）
+    memory_context = retrieval.retrieve_memories(
+        db=db,
+        query_text=user_content,
+    )
+
+    # 构造系统提示词（包含检索到的记忆）
+    if memory_context and memory_context.enabled:
+        system_prompt = retrieval.build_system_prompt_with_context(
+            base_prompt=_DEFAULT_SYSTEM_PROMPT,
+            memory_context=memory_context,
+        )
+    else:
+        system_prompt = _DEFAULT_SYSTEM_PROMPT
+
     # 尝试自动更新会话标题（首次对话时）
     _try_auto_title(db, session_id, user_content, history_messages)
 
@@ -242,6 +258,8 @@ def initialize_chat_stream(
         },
         "model_messages": model_messages[:-1],  # 去掉占位消息
         "api_key": resolved_key,
+        "system_prompt": system_prompt,  # 个性化系统提示词
+        "memory_context": memory_context,  # 检索到的记忆（用于引用记录）
     }
 
 
@@ -251,6 +269,8 @@ def run_chat_stream(
     active_config: dict[str, Any],
     model_messages: list[dict[str, str]],
     api_key: str,
+    system_prompt: str | None = None,
+    memory_context=None,
 ) -> Generator[dict[str, Any], None, None]:
     """流式对话生成（使用独立 db session，不阻塞连接池）。
 
@@ -260,6 +280,8 @@ def run_chat_stream(
         active_config: 模型配置信息 {provider, model_name, api_base}
         model_messages: 历史消息列表
         api_key: API Key
+        system_prompt: 系统提示词（含个性化上下文，None 时使用默认值）
+        memory_context: 检索到的记忆上下文（用于引用记录）
 
     Yields:
         流式事件字典:
@@ -281,7 +303,7 @@ def run_chat_stream(
             api_key=api_key,
             api_base=active_config.get("api_base"),
             messages=model_messages,
-            system_prompt=_DEFAULT_SYSTEM_PROMPT,
+            system_prompt=system_prompt or _DEFAULT_SYSTEM_PROMPT,
         ):
             collected_content += token
             yield {"type": "token", "content": token}
@@ -295,6 +317,18 @@ def run_chat_stream(
             _try_create_memory_extract_task(
                 db, session_id, assistant_msg_id, collected_content,
             )
+
+            # 保存记忆引用记录（非阻塞，失败不影响对话）
+            if memory_context and memory_context.enabled:
+                try:
+                    from app.services.memory import save_memory_references
+                    save_memory_references(
+                        db=db,
+                        message_id=assistant_msg_id,
+                        memory_context=memory_context,
+                    )
+                except Exception as exc:
+                    logger.warning(f"保存记忆引用失败（不影响对话）: {exc}")
         finally:
             db.close()
         yield {"type": "done", "message_id": assistant_msg_id}

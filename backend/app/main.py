@@ -120,12 +120,14 @@ from app.api import audit as api_audit
 from app.api import chat as api_chat
 from app.api import memories as api_memories
 from app.api import models as api_models
+from app.api import retrieval as api_retrieval
 from app.api import tasks as api_tasks
 
 app.include_router(api_audit.router)
 app.include_router(api_chat.router)
 app.include_router(api_memories.router)
 app.include_router(api_models.router)
+app.include_router(api_retrieval.router)
 app.include_router(api_tasks.router)
 
 

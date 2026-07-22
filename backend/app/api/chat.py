@@ -150,6 +150,8 @@ def chat_stream(
     active_config = init_result["active_config"]
     model_messages = init_result["model_messages"]
     api_key = init_result["api_key"]
+    system_prompt = init_result.get("system_prompt")
+    memory_context = init_result.get("memory_context")
 
     # 阶段 2：流式生成（使用独立 session）
     def event_generator():
@@ -159,6 +161,8 @@ def chat_stream(
             active_config=active_config,
             model_messages=model_messages,
             api_key=api_key,
+            system_prompt=system_prompt,
+            memory_context=memory_context,
         ):
             yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
