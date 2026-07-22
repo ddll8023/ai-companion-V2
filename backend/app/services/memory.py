@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import math
 from datetime import datetime
 
@@ -16,6 +17,7 @@ from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.database import commit_or_rollback
+from app.models.chat import Message
 from app.models.memory import Memory, MemoryRevision, MemorySource
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.schemas.memory import (
@@ -285,7 +287,8 @@ def check_source_valid(
     Args:
         db: 数据库会话
         session_id: 来源会话 ID
-        source_version: 来源内容版本号
+        source_version: 来源内容版本号。格式为 "md5_<hex>"，执行时重新计算消息内容
+            的 MD5 进行比对。不以 "md5_" 开头时跳过内容校验（向后兼容）。
         source_ids: 来源消息 ID 列表
 
     Returns:
@@ -294,14 +297,31 @@ def check_source_valid(
     if not source_ids:
         return True
 
-    from app.models.chat import Message
-
     existing = db.scalars(
         select(Message).where(Message.id.in_(source_ids))
     ).all()
 
-    # 如果消息数量不匹配，说明有消息已被删除
-    return len(existing) == len(source_ids)
+    # 检查消息数量是否匹配（消息是否被删除）
+    if len(existing) != len(source_ids):
+        return False
+
+    # 如果 source_version 以 "md5_" 开头，校验内容是否被修改
+    if source_version and source_version.startswith("md5_"):
+        stored_hash = source_version[4:]  # 去掉 "md5_" 前缀
+        # 按 source_ids 的顺序拼接消息内容
+        existing.sort(key=lambda m: m.id)
+        content_parts = []
+        for msg in existing:
+            content_parts.append(msg.content or "")
+        current_md5 = hashlib.md5("|".join(content_parts).encode("utf-8")).hexdigest()
+        if current_md5 != stored_hash:
+            logger.info(
+                f"来源内容已变更: source_version={source_version}, "
+                f"current_md5={current_md5}, ids={source_ids}"
+            )
+            return False
+
+    return True
 
 
 # ── 内部方法 ────────────────────────────────────────────────────────────────

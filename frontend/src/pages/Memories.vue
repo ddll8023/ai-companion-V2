@@ -455,20 +455,18 @@ async function loadMore() {
 
 async function updateTabCounts() {
   try {
-    for (const tab of statusTabs.value) {
+    // 使用 Promise.all 并行查询各状态计数，避免 N+1 串行
+    const promises = statusTabs.value.map(async (tab) => {
       if (!tab.value) {
-        // 全部 = 非 deleted 的记忆数量
-        // 简化处理：使用 total 作为全部计数
-        tab.count = total.value
-        continue
+        // 全部标签：查询全量计数（不传 status 参数）
+        const res = await memoryApi.listMemories({ page: 1, page_size: 1 })
+        tab.count = res.data?.pagination?.total || 0
+      } else {
+        const res = await memoryApi.listMemories({ status: tab.value, page: 1, page_size: 1 })
+        tab.count = res.data?.pagination?.total || 0
       }
-      const res = await memoryApi.listMemories({
-        status: tab.value,
-        page: 1,
-        page_size: 1,
-      })
-      tab.count = res.data?.pagination?.total || 0
-    }
+    })
+    await Promise.all(promises)
   } catch {
     // 更新标签计数失败不影响主流程
   }

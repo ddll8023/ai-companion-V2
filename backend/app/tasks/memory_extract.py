@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import json
 
+from sqlalchemy import desc, select
+
+from app.core import api_key_cache
 from app.core.database import get_background_db_session
 from app.models.chat import Message
 from app.schemas.memory import MemoryCreate
@@ -63,11 +66,17 @@ def handle_memory_extract(payload: dict | None) -> str | None:
         user_message_id = payload.get("user_message_id")
         assistant_message_id = payload.get("assistant_message_id")
         source_version = payload.get("source_version")
-        api_key = payload.get("api_key")
 
         if not session_id:
             logger.warning("记忆提取任务缺少 session_id")
             return json.dumps({"extracted": 0, "error": "缺少 session_id"})
+
+        # 从内存缓存获取 API Key（不持久化到 SQLite）
+        api_key_cache_key = f"chat_{assistant_message_id}"
+        api_key = api_key_cache.pop(api_key_cache_key)
+        if not api_key:
+            logger.warning(f"记忆提取: API Key 缓存未命中, session_id={session_id}")
+            return json.dumps({"extracted": 0, "error": "API Key 不可用（可能已过期）"})
 
         # 检查来源是否仍然有效
         source_ids = []
@@ -79,8 +88,8 @@ def handle_memory_extract(payload: dict | None) -> str | None:
             logger.info(f"记忆提取跳过: 来源内容已变更或删除, session_id={session_id}")
             return json.dumps({"extracted": 0, "reason": "来源内容已变更或删除"})
 
-        # 获取对话内容
-        messages = _get_conversation_messages(db, session_id, user_message_id, assistant_message_id)
+        # 获取该会话最近的多条对话内容作为上下文
+        messages = _get_conversation_messages(db, session_id)
         if not messages:
             logger.info(f"记忆提取: 没有可用的对话内容, session_id={session_id}")
             return json.dumps({"extracted": 0, "reason": "无可用的对话内容"})
@@ -94,30 +103,40 @@ def handle_memory_extract(payload: dict | None) -> str | None:
 def _get_conversation_messages(
     db,
     session_id: int,
-    user_message_id: int | None,
-    assistant_message_id: int | None,
+    max_messages: int = 6,
 ) -> str:
-    """获取需要提取记忆的对话内容。"""
-    query_ids = []
-    if user_message_id:
-        query_ids.append(user_message_id)
-    if assistant_message_id:
-        query_ids.append(assistant_message_id)
+    """获取该会话最近的多条对话内容。
 
-    if not query_ids:
-        return ""
+    使用最近的多轮对话作为上下文，帮助模型更准确地判断哪些信息值得记忆。
+    默认取最近 6 条消息（约 3 轮对话）。
 
+    Args:
+        db: 数据库会话
+        session_id: 会话 ID
+        max_messages: 最大消息条数
+
+    Returns:
+        拼接后的对话文本
+    """
     messages = db.scalars(
-        Message.__table__.select().where(Message.id.in_(query_ids))
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.status == "completed",
+        )
+        .order_by(desc(Message.id))
+        .limit(max_messages)
     ).all()
 
-    # 按 ID 排序以保证对话顺序
+    if not messages:
+        return ""
+
+    # 按 ID 正序排列以保持对话顺序
     messages.sort(key=lambda m: m.id)
 
     parts = []
     for msg in messages:
         role = "用户" if msg.role == "user" else "助手"
-        # 截取内容防止过长
         content = msg.content[:2000] if msg.content else ""
         parts.append(f"{role}: {content}")
 

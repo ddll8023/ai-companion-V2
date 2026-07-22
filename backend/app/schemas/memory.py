@@ -82,8 +82,6 @@ class MemoryDetailResponse(BaseModel):
     sources: list[MemorySourceResponse] = Field(default_factory=list)
     revisions: list[MemoryRevisionResponse] = Field(default_factory=list)
 
-    model_config = ConfigDict(from_attributes=True)
-
 
 class MemoryListQuery(BaseModel):
     """记忆列表查询参数。"""

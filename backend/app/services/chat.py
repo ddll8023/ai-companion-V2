@@ -12,12 +12,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any, Generator
 
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
+from app.core import api_key_cache
 from app.core.database import commit_or_rollback, get_background_db_session
 from app.models.chat import ChatSession, Message
 from app.schemas.chat import MessageResponse, SessionCreate, SessionResponse, SessionUpdate
@@ -267,6 +269,11 @@ def run_chat_stream(
     """
     collected_content = ""
 
+    # 将 API Key 存入进程内存缓存（供后台任务使用），不持久化到 SQLite
+    api_key_cache_key = f"chat_{assistant_msg_id}"
+    if api_key:
+        api_key_cache.store(api_key_cache_key, api_key)
+
     try:
         for token in model_provider.chat_stream(
             provider=active_config["provider"],
@@ -284,8 +291,10 @@ def run_chat_stream(
         try:
             _complete_assistant_message(db, assistant_msg_id, collected_content)
 
-            # 对话完成后创建候选记忆提取后台任务
-            _try_create_memory_extract_task(db, session_id, assistant_msg_id, api_key)
+            # 对话完成后创建候选记忆提取后台任务（不再传入 api_key）
+            _try_create_memory_extract_task(
+                db, session_id, assistant_msg_id, collected_content,
+            )
         finally:
             db.close()
         yield {"type": "done", "message_id": assistant_msg_id}
@@ -301,6 +310,8 @@ def run_chat_stream(
                 _fail_assistant_message(db, assistant_msg_id, "用户中止")
         finally:
             db.close()
+        # 清理 API Key 缓存
+        api_key_cache.pop(api_key_cache_key)
         raise
 
     except ServiceException as e:
@@ -312,6 +323,7 @@ def run_chat_stream(
                 _fail_assistant_message(db, assistant_msg_id, e.message)
         finally:
             db.close()
+        api_key_cache.pop(api_key_cache_key)
         yield {"type": "error", "message": e.message}
     except Exception as e:
         logger.error(f"对话流式调用异常: {e}", exc_info=True)
@@ -323,6 +335,7 @@ def run_chat_stream(
                 _fail_assistant_message(db, assistant_msg_id, str(e))
         finally:
             db.close()
+        api_key_cache.pop(api_key_cache_key)
         yield {"type": "error", "message": f"对话生成失败: {e!s}"}
 
 
@@ -352,11 +365,17 @@ def _try_create_memory_extract_task(
     db: Session,
     session_id: int,
     assistant_message_id: int,
-    api_key: str | None = None,
+    assistant_content: str,
 ) -> None:
     """对话完成后创建候选记忆提取后台任务。
 
     这是一个非阻塞操作。任务创建失败不影响对话主流程。
+
+    Args:
+        db: 数据库会话
+        session_id: 会话 ID
+        assistant_message_id: 助手消息 ID
+        assistant_content: 助手回复内容（用于生成 source_version 版本校验）
     """
     try:
         # 查找该会话最新的一条用户消息作为来源
@@ -374,21 +393,24 @@ def _try_create_memory_extract_task(
             logger.warning(f"记忆提取任务创建: 未找到用户消息, session_id={session_id}")
             return
 
+        # 使用消息内容的 MD5 作为 source_version，用于执行时校验来源是否变更
+        content_md5 = hashlib.md5(
+            f"{user_msg.content}|{assistant_content}".encode("utf-8")
+        ).hexdigest()
+
         payload = {
             "session_id": session_id,
             "user_message_id": user_msg.id,
             "assistant_message_id": assistant_message_id,
-            "source_version": f"msg_{user_msg.id}_{assistant_message_id}",
+            "source_version": f"md5_{content_md5}",
         }
-        if api_key:
-            payload["api_key"] = api_key
 
         task_data = TaskCreate(
             task_type="memory.extract",
             payload=json.dumps(payload),
             dedup_key=f"memory.extract:session:{session_id}",
             priority=0,
-            source_version=f"msg_{user_msg.id}",
+            source_version=f"md5_{content_md5}",
         )
         services_task.create_task(db, task_data)
         logger.info(f"创建记忆提取任务: session_id={session_id}")
