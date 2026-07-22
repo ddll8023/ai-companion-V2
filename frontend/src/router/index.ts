@@ -18,7 +18,7 @@ const routes: RouteRecordRaw[] = [
     path: '/memories',
     name: 'Memories',
     meta: { title: '记忆', icon: 'brain' },
-    component: () => import('@/pages/PlaceholderPage.vue'),
+    component: () => import('@/pages/Memories.vue'),
   },
   {
     path: '/goals',

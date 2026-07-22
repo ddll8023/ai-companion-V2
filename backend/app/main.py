@@ -56,6 +56,7 @@ async def lifespan(app: FastAPI):
     # 数据库就绪后启动后台任务调度器
     if _db_ready:
         try:
+            from app.tasks import memory_extract  # 注册记忆提取任务处理器
             from app.tasks.scheduler import TaskScheduler
             _task_scheduler = TaskScheduler(poll_interval=2.0, recovery_interval=60.0)
             _task_scheduler.start()
@@ -117,11 +118,13 @@ async def global_exception_handler(request: Request, exc: Exception):
 # 注册路由
 from app.api import audit as api_audit
 from app.api import chat as api_chat
+from app.api import memories as api_memories
 from app.api import models as api_models
 from app.api import tasks as api_tasks
 
 app.include_router(api_audit.router)
 app.include_router(api_chat.router)
+app.include_router(api_memories.router)
 app.include_router(api_models.router)
 app.include_router(api_tasks.router)
 

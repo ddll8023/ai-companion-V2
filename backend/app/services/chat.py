@@ -22,7 +22,9 @@ from app.core.database import commit_or_rollback, get_background_db_session
 from app.models.chat import ChatSession, Message
 from app.schemas.chat import MessageResponse, SessionCreate, SessionResponse, SessionUpdate
 from app.schemas.common import ErrorCode
+from app.schemas.task import TaskCreate
 from app.services import model_provider
+from app.services import task as services_task
 from app.services.audit import record_audit
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
@@ -281,6 +283,9 @@ def run_chat_stream(
         db = get_background_db_session()
         try:
             _complete_assistant_message(db, assistant_msg_id, collected_content)
+
+            # 对话完成后创建候选记忆提取后台任务
+            _try_create_memory_extract_task(db, session_id, assistant_msg_id, api_key)
         finally:
             db.close()
         yield {"type": "done", "message_id": assistant_msg_id}
@@ -338,6 +343,58 @@ def _try_auto_title(
             new_title += "…"
         session.title = new_title
         commit_or_rollback(db)
+
+
+# ── 内部方法 ────────────────────────────────────────────────────────────────
+
+
+def _try_create_memory_extract_task(
+    db: Session,
+    session_id: int,
+    assistant_message_id: int,
+    api_key: str | None = None,
+) -> None:
+    """对话完成后创建候选记忆提取后台任务。
+
+    这是一个非阻塞操作。任务创建失败不影响对话主流程。
+    """
+    try:
+        # 查找该会话最新的一条用户消息作为来源
+        user_msg = db.scalar(
+            select(Message)
+            .where(
+                Message.session_id == session_id,
+                Message.role == "user",
+                Message.status == "completed",
+            )
+            .order_by(desc(Message.id))
+            .limit(1)
+        )
+        if user_msg is None:
+            logger.warning(f"记忆提取任务创建: 未找到用户消息, session_id={session_id}")
+            return
+
+        payload = {
+            "session_id": session_id,
+            "user_message_id": user_msg.id,
+            "assistant_message_id": assistant_message_id,
+            "source_version": f"msg_{user_msg.id}_{assistant_message_id}",
+        }
+        if api_key:
+            payload["api_key"] = api_key
+
+        task_data = TaskCreate(
+            task_type="memory.extract",
+            payload=json.dumps(payload),
+            dedup_key=f"memory.extract:session:{session_id}",
+            priority=0,
+            source_version=f"msg_{user_msg.id}",
+        )
+        services_task.create_task(db, task_data)
+        logger.info(f"创建记忆提取任务: session_id={session_id}")
+    except Exception as e:
+        # 任务创建失败不影响对话主流程
+        logger.warning(f"创建记忆提取任务失败: {e!s}")
 
 
 # ── 内部方法 ────────────────────────────────────────────────────────────────

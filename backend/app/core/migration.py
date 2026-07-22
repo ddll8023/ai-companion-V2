@@ -25,9 +25,10 @@ _VERSION_TABLE = "_db_version"
 #   v2 — 添加: background_tasks
 #   v3 — 未记录变更
 #   v4 — 未记录变更
+#   v5 — 添加: memories, memory_sources, memory_revisions
 #
 # 注意: 开发阶段版本不匹配时会清空数据重建，生产阶段需实现逐版本迁移。
-_CURRENT_VERSION: int = 4
+_CURRENT_VERSION: int = 5
 
 
 def _ensure_version_table(db: Session):

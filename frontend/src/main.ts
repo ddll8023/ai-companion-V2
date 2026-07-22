@@ -5,8 +5,10 @@ import { createPinia } from 'pinia'
 import { library } from '@fortawesome/fontawesome-svg-core'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
 import {
+  faBan,
   faBrain,
   faBullseye,
+  faCheck,
   faCheckCircle,
   faCircleExclamation,
   faClock,
@@ -31,8 +33,10 @@ import {
 } from '@fortawesome/free-solid-svg-icons'
 
 library.add(
+  faBan,
   faBrain,
   faBullseye,
+  faCheck,
   faCheckCircle,
   faCircleExclamation,
   faClock,

@@ -366,6 +366,137 @@ def _chat_stream_anthropic(
                         continue
 
 
+def chat_sync(
+    provider: str,
+    model_name: str,
+    api_key: str | None,
+    api_base: str | None,
+    system_prompt: str | None = None,
+    messages: list[dict[str, str]] | None = None,
+) -> str | None:
+    """同步对话（非流式），完整回复一次性返回，用于后台任务等场景。
+
+    Args:
+        provider: 模型供应商
+        model_name: 模型名称
+        api_key: API Key（可为 None，此时尝试从 keystore 获取）
+        api_base: API 地址
+        system_prompt: 系统提示词
+        messages: 消息列表
+
+    Returns:
+        完整回复文本，失败时返回 None
+    """
+    try:
+        resolved_key = api_key
+        if not resolved_key:
+            logger.warning("chat_sync: 缺少 API Key")
+            return None
+
+        if provider in ("openai", "openai-compatible"):
+            return _chat_sync_openai(model_name, resolved_key, api_base, messages, system_prompt)
+        elif provider == "anthropic":
+            return _chat_sync_anthropic(model_name, resolved_key, api_base, messages, system_prompt)
+        else:
+            logger.warning(f"chat_sync: 不支持的供应商: {provider}")
+            return None
+    except Exception as e:
+        logger.error(f"chat_sync 调用异常: {e!s}", exc_info=True)
+        return None
+
+
+def _chat_sync_openai(
+    model_name: str,
+    api_key: str,
+    api_base: str | None,
+    messages: list[dict[str, str]] | None,
+    system_prompt: str | None = None,
+) -> str | None:
+    """OpenAI 格式同步对话。"""
+    base_url = (api_base or "https://api.openai.com/v1").rstrip("/")
+    url = f"{base_url}/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    payload_messages = []
+    if system_prompt:
+        payload_messages.append({"role": "system", "content": system_prompt})
+    if messages:
+        payload_messages.extend(messages)
+
+    payload = {
+        "model": model_name,
+        "messages": payload_messages,
+        "stream": False,
+    }
+
+    try:
+        with httpx.Client(timeout=60) as client:
+            response = client.post(url, json=payload, headers=headers)
+            if response.status_code != 200:
+                err_msg = _extract_error(response)
+                logger.warning(f"chat_sync OpenAI 调用失败: {err_msg}")
+                return None
+
+            result = response.json()
+            return result.get("choices", [{}])[0].get("message", {}).get("content", "")
+    except Exception as e:
+        logger.error(f"chat_sync OpenAI 异常: {e!s}", exc_info=True)
+        return None
+
+
+def _chat_sync_anthropic(
+    model_name: str,
+    api_key: str,
+    api_base: str | None,
+    messages: list[dict[str, str]] | None,
+    system_prompt: str | None = None,
+) -> str | None:
+    """Anthropic 格式同步对话。"""
+    base_url = (api_base or "https://api.anthropic.com/v1").rstrip("/")
+    url = f"{base_url}/messages"
+
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+
+    payload_messages = []
+    if messages:
+        payload_messages = [m for m in messages if m.get("role") != "system"]
+
+    payload: dict = {
+        "model": model_name,
+        "max_tokens": 4096,
+        "messages": payload_messages,
+    }
+    if system_prompt:
+        payload["system"] = system_prompt
+
+    try:
+        with httpx.Client(timeout=60) as client:
+            response = client.post(url, json=payload, headers=headers)
+            if response.status_code != 200:
+                err_msg = _extract_error(response)
+                logger.warning(f"chat_sync Anthropic 调用失败: {err_msg}")
+                return None
+
+            result = response.json()
+            content_blocks = result.get("content", [])
+            full_text = ""
+            for block in content_blocks:
+                if block.get("type") == "text":
+                    full_text += block.get("text", "")
+            return full_text if full_text else None
+    except Exception as e:
+        logger.error(f"chat_sync Anthropic 异常: {e!s}", exc_info=True)
+        return None
+
+
 def _extract_error(response: httpx.Response) -> str:
     """从模型 API 错误响应中提取错误消息。"""
     try:

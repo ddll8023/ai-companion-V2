@@ -120,6 +120,79 @@ export interface ChatStreamEvent {
   message?: string
 }
 
+// ── 记忆类型 ──────────────────────────────────────────────────────────────
+
+/** 记忆 */
+export interface Memory {
+  id: number
+  content: string
+  type: 'fact' | 'preference' | 'event' | 'goal' | 'habit'
+  importance: number
+  status: 'candidate' | 'confirmed' | 'corrected' | 'rejected' | 'deleted'
+  session_id: number | null
+  source_version: string | null
+  version: number
+  error_message: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 创建记忆请求 */
+export interface MemoryCreate {
+  content: string
+  type?: string
+  importance?: number
+  session_id?: number | null
+  source_version?: string | null
+  source_type?: string
+  source_ids?: number[]
+}
+
+/** 纠正记忆请求 */
+export interface MemoryCorrect {
+  content: string
+  type: string
+  importance: number
+}
+
+/** 记忆来源 */
+export interface MemorySource {
+  id: number
+  memory_id: number
+  source_type: string
+  source_id: number
+  content_preview: string | null
+  created_at: string | null
+}
+
+/** 记忆修订历史 */
+export interface MemoryRevision {
+  id: number
+  memory_id: number
+  previous_content: string
+  previous_type: string | null
+  previous_importance: number | null
+  changed_by: string
+  created_at: string | null
+}
+
+/** 记忆详情 */
+export interface MemoryDetail {
+  memory: Memory
+  sources: MemorySource[]
+  revisions: MemoryRevision[]
+}
+
+/** 记忆列表查询参数 */
+export interface MemoryListQuery {
+  status?: string
+  type?: string
+  session_id?: number
+  keyword?: string
+  page?: number
+  page_size?: number
+}
+
 /** Electron API 接口 */
 export interface ElectronAPI {
   apiGet: <T>(url: string) => Promise<ApiResponse<T>>
