@@ -20,6 +20,11 @@ import * as net from 'net';
 import * as crypto from 'crypto';
 import * as http from 'http';
 import { IPC_CHANNELS } from './constants/channels';
+import {
+  getPlatform,
+  getSupportedCapabilities,
+  PlatformCapabilitiesResponse,
+} from './constants/platform';
 
 // ── 常量 ──────────────────────────────────────────────────────────────
 
@@ -469,6 +474,14 @@ function setupIpcHandlers(): void {
   // 获取应用版本
   ipcMain.handle(IPC_CHANNELS.GET_APP_VERSION, () => {
     return app.getVersion();
+  });
+
+  // 获取平台能力状态
+  ipcMain.handle(IPC_CHANNELS.GET_PLATFORM_CAPABILITIES, () => {
+    const platform = getPlatform();
+    const capabilities = getSupportedCapabilities();
+    const result: PlatformCapabilitiesResponse = { platform, capabilities };
+    return result;
   });
 }
 

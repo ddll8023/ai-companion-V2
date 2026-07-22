@@ -61,6 +61,17 @@ const api = {
   getAppVersion: (): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
 
+  /** 获取平台各能力状态 */
+  getPlatformCapabilities: (): Promise<{
+    platform: string;
+    capabilities: Array<{
+      name: string;
+      status: string;
+      label: string;
+      description: string | null;
+    }>;
+  }> => ipcRenderer.invoke(IPC_CHANNELS.GET_PLATFORM_CAPABILITIES),
+
   // ── 事件监听 ────────────────────────────────────────────
   /** 监听后端服务状态变化 */
   onBackendStatus: (callback: (status: { ready: boolean }) => void): void => {

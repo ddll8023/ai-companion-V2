@@ -30,13 +30,19 @@ const routes: RouteRecordRaw[] = [
     path: '/activities',
     name: 'Activities',
     meta: { title: '活动', icon: 'clock' },
-    component: () => import('@/pages/PlaceholderPage.vue'),
+    component: () => import('@/pages/Activities.vue'),
   },
   {
     path: '/settings',
     name: 'Settings',
     meta: { title: '模型设置', icon: 'gear' },
     component: () => import('@/pages/SettingsModel.vue'),
+  },
+  {
+    path: '/settings/privacy',
+    name: 'SettingsPrivacy',
+    meta: { title: '隐私设置', icon: 'shield' },
+    component: () => import('@/pages/SettingsPrivacy.vue'),
   },
 ]
 

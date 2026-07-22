@@ -205,6 +205,8 @@ export interface ElectronAPI {
   keystoreHas: (key: string) => Promise<{ success: boolean; has: boolean }>
   getPlatform: () => Promise<string>
   getAppVersion: () => Promise<string>
+  /** 获取平台各能力状态 */
+  getPlatformCapabilities: () => Promise<PlatformCapabilitiesResponse>
   onBackendStatus: (callback: (status: { ready: boolean }) => void) => void
   removeBackendStatusListener: () => void
 }
@@ -317,3 +319,128 @@ export interface TaskSuggestionCreate {
 export interface GoalDetail {
   goal: Goal
   tasks: Task[]
+}
+
+// ── 活动类型 ─────────────────────────────────────────────────────────────────
+
+/** 活动记录 */
+export interface Activity {
+  id: number
+  app_name: string
+  window_title: string | null
+  started_at: string
+  ended_at: string | null
+  duration_seconds: number | null
+  is_idle: boolean
+  platform: string
+  privacy_action: string
+  masked_app_name: string | null
+  masked_window_title: string | null
+  created_at: string
+}
+
+/** 活动事件（Electron 上报用） */
+export interface ActivityEvent {
+  app_name: string
+  window_title?: string
+  started_at: string
+  ended_at?: string
+  duration_seconds?: number
+  is_idle?: boolean
+  platform: string
+  source_id?: string
+}
+
+/** 批量活动事件上报 */
+export interface BatchActivityEvent {
+  events: ActivityEvent[]
+}
+
+/** 活动列表查询参数 */
+export interface ActivityListQuery {
+  app_name?: string
+  platform?: string
+  privacy_action?: string
+  keyword?: string
+  start_time?: string
+  end_time?: string
+  page?: number
+  page_size?: number
+}
+
+/** 活动统计 */
+export interface ActivityStats {
+  total_count: number
+  today_count: number
+  unique_apps: number
+}
+
+// ── 隐私规则类型 ─────────────────────────────────────────────────────────────
+
+/** 隐私规则 */
+export interface PrivacyRule {
+  id: number
+  rule_type: string
+  rule_value: string
+  description: string | null
+  is_active: boolean
+  priority: number
+  created_at: string
+  updated_at: string
+}
+
+/** 创建隐私规则请求 */
+export interface PrivacyRuleCreate {
+  rule_type: string
+  rule_value: string
+  description?: string
+  priority?: number
+}
+
+/** 更新隐私规则请求 */
+export interface PrivacyRuleUpdate {
+  rule_type?: string
+  rule_value?: string
+  description?: string
+  is_active?: boolean
+  priority?: number
+}
+
+/** 隐私规则列表查询参数 */
+export interface PrivacyRuleListQuery {
+  rule_type?: string
+  is_active?: boolean
+  page?: number
+  page_size?: number
+}
+
+/** 隐私评估请求 */
+export interface PrivacyEvaluateRequest {
+  app_name: string
+  window_title?: string
+  platform: string
+}
+
+/** 隐私评估结果 */
+export interface PrivacyEvaluateResult {
+  allowed: boolean
+  action: string
+  reason: string | null
+  matched_rule_id: number | null
+  masked_app_name: string | null
+  masked_window_title: string | null
+}
+
+/** 平台单项能力 */
+export interface PlatformCapability {
+  name: string
+  status: 'available' | 'pending_auth' | 'denied' | 'restricted' | 'unsupported' | 'not_implemented'
+  label: string
+  description: string | null
+}
+
+/** 平台能力列表 */
+export interface PlatformCapabilitiesResponse {
+  platform: string
+  capabilities: PlatformCapability[]
+}
