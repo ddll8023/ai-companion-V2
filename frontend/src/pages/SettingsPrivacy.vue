@@ -3,11 +3,101 @@
     <!-- 页面标题 -->
     <div class="mb-6">
       <h2 class="text-xl font-semibold text-text">隐私设置</h2>
-      <p class="mt-1 text-sm text-text-secondary">管理活动采集的隐私规则</p>
+      <p class="mt-1 text-sm text-text-secondary">管理活动采集的隐私规则和平台权限</p>
     </div>
 
-    <!-- 新建规则按钮 -->
-    <div class="mb-4">
+    <!-- ── 采集控制面板 ────────────────────────────────────────── -->
+    <div class="p-4 bg-surface border border-border rounded-lg mb-6">
+      <div class="flex items-center justify-between">
+        <div>
+          <h3 class="text-sm font-medium text-text">活动采集</h3>
+          <p class="mt-0.5 text-xs text-text-tertiary">
+            {{ isElectron ? '控制桌面活动采集的启停' : '采集仅在桌面版可用' }}
+          </p>
+        </div>
+        <button
+          v-if="isElectron"
+          class="px-4 py-1.5 text-sm font-medium rounded-lg transition-colors disabled:opacity-50"
+          :class="captureRunning
+            ? 'bg-error/10 text-error hover:bg-error/20'
+            : 'bg-primary/10 text-primary hover:bg-primary/20'"
+          :disabled="captureActionLoading"
+          @click="toggleCapture"
+        >
+          {{ captureRunning ? '停止采集' : '开始采集' }}
+        </button>
+        <span
+          v-else
+          class="px-3 py-1 text-xs text-text-tertiary bg-hover rounded-lg"
+        >
+          仅桌面模式
+        </span>
+      </div>
+      <!-- 采集状态详情 -->
+      <div v-if="isElectron && captureStatus" class="mt-3 pt-3 border-t border-border grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+        <div>
+          <span class="text-text-tertiary">状态</span>
+          <p class="mt-0.5 font-medium" :class="captureRunning ? 'text-success' : 'text-text-tertiary'">
+            {{ captureRunning ? '采集中' : '已停止' }}
+          </p>
+        </div>
+        <div>
+          <span class="text-text-tertiary">已提交事件</span>
+          <p class="mt-0.5 font-medium text-text">{{ captureStatus.eventsSubmitted }}</p>
+        </div>
+        <div>
+          <span class="text-text-tertiary">已跳过事件</span>
+          <p class="mt-0.5 font-medium text-text">{{ captureStatus.eventsSkipped }}</p>
+        </div>
+        <div>
+          <span class="text-text-tertiary">应用权限</span>
+          <p class="mt-0.5 font-medium" :class="captureStatus.accessibilityAvailable ? 'text-success' : 'text-warning'">
+            {{ captureStatus.accessibilityAvailable ? '已授权' : '未授权' }}
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── 平台能力状态 ────────────────────────────────────────── -->
+    <div class="p-4 bg-surface border border-border rounded-lg mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-text">系统权限状态</h3>
+        <button
+          class="text-xs text-primary hover:underline"
+          :disabled="capLoading"
+          @click="fetchCapabilities"
+        >
+          刷新
+        </button>
+      </div>
+      <LoadingState :loading="capLoading" loading-text="检测系统权限...">
+        <div v-if="capabilities.length === 0 && !capLoading" class="text-xs text-text-tertiary py-2">
+          {{ isElectron ? '无法获取权限状态' : '权限检测仅在桌面版可用' }}
+        </div>
+        <div v-else class="space-y-2">
+          <div
+            v-for="cap in capabilities"
+            :key="cap.name"
+            class="flex items-center justify-between py-1.5"
+          >
+            <div class="flex-1 min-w-0">
+              <p class="text-sm text-text">{{ cap.label }}</p>
+              <p v-if="cap.description" class="text-xs text-text-tertiary truncate">{{ cap.description }}</p>
+            </div>
+            <span
+              class="ml-3 inline-flex items-center px-2 py-0.5 text-xs rounded font-medium whitespace-nowrap"
+              :class="statusClass(cap.status)"
+            >
+              {{ statusLabel(cap.status) }}
+            </span>
+          </div>
+        </div>
+      </LoadingState>
+    </div>
+
+    <!-- ── 隐私规则管理 ────────────────────────────────────────── -->
+    <div class="mb-4 flex items-center justify-between">
+      <h3 class="text-sm font-medium text-text">隐私规则</h3>
       <button
         class="px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors"
         @click="openCreateDialog"
@@ -222,11 +312,16 @@ import {
   updatePrivacyRule,
   deletePrivacyRule,
 } from '@/api/activity'
-import type { PrivacyRule } from '@/types/api'
+import type { PrivacyRule, PlatformCapability } from '@/types/api'
 
-// ── 状态 ──────────────────────────────────────────────────────────────────
+// ── 运行环境检测 ─────────────────────────────────────────────────────────
+
+const isElectron = typeof window !== 'undefined' && !!window.electronAPI
+
+// ── 状态 ─────────────────────────────────────────────────────────────────
 
 const loading = ref(false)
+const capLoading = ref(false)
 const actionLoading = ref(false)
 const error = ref<string | null>(null)
 const rules = ref<PrivacyRule[]>([])
@@ -235,6 +330,19 @@ const deleteDialogVisible = ref(false)
 const editingRule = ref<PrivacyRule | null>(null)
 const deletingRule = ref<PrivacyRule | null>(null)
 const filterType = ref('')
+const capabilities = ref<PlatformCapability[]>([])
+const captureRunning = ref(false)
+const captureActionLoading = ref(false)
+const captureStatus = ref<{
+  running: boolean
+  pollIntervalMs: number
+  lastCaptureTime: string | null
+  lastAppName: string | null
+  eventsSubmitted: number
+  eventsSkipped: number
+  errors: number
+  accessibilityAvailable: boolean
+} | null>(null)
 
 const form = reactive({
   rule_type: 'app_blacklist',
@@ -253,7 +361,84 @@ const ruleTypeInfo = [
 
 const typeCounts = reactive<Record<string, number>>({})
 
-// ── 数据获取 ──────────────────────────────────────────────────────────────
+// ── 平台能力检测 ─────────────────────────────────────────────────────────
+
+async function fetchCapabilities() {
+  if (!isElectron) return
+  capLoading.value = true
+  try {
+    const res = await window.electronAPI!.getPlatformCapabilities()
+    capabilities.value = res.capabilities
+  } catch {
+    // 检测失败不影响其他功能
+  } finally {
+    capLoading.value = false
+  }
+}
+
+function statusClass(status: string): string {
+  switch (status) {
+    case 'available': return 'bg-green-100 text-green-700'
+    case 'pending_auth': return 'bg-yellow-100 text-yellow-700'
+    case 'denied': return 'bg-red-100 text-red-700'
+    case 'restricted': return 'bg-orange-100 text-orange-700'
+    case 'unsupported': return 'bg-gray-100 text-gray-500'
+    case 'not_implemented': return 'bg-gray-100 text-gray-400'
+    default: return 'bg-gray-100 text-gray-500'
+  }
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case 'available': return '可用'
+    case 'pending_auth': return '待授权'
+    case 'denied': return '已拒绝'
+    case 'restricted': return '受限'
+    case 'unsupported': return '不支持'
+    case 'not_implemented': return '未实现'
+    default: return status
+  }
+}
+
+// ── 采集控制 ─────────────────────────────────────────────────────────────
+
+async function fetchCaptureStatus() {
+  if (!isElectron) return
+  try {
+    const res = await window.electronAPI!.getActivityCaptureStatus()
+    if (res.success) {
+      captureStatus.value = res.status
+      captureRunning.value = res.status.running
+    }
+  } catch {
+    // 状态获取失败
+  }
+}
+
+async function toggleCapture() {
+  if (!isElectron || captureActionLoading.value) return
+  captureActionLoading.value = true
+  try {
+    if (captureRunning.value) {
+      const res = await window.electronAPI!.stopActivityCapture()
+      if (res.success) {
+        captureRunning.value = false
+      }
+    } else {
+      const res = await window.electronAPI!.startActivityCapture()
+      if (res.success) {
+        captureRunning.value = true
+      }
+    }
+    await fetchCaptureStatus()
+  } catch {
+    // 操作失败
+  } finally {
+    captureActionLoading.value = false
+  }
+}
+
+// ── 数据获取 ─────────────────────────────────────────────────────────────
 
 async function fetchRules() {
   loading.value = true
@@ -409,5 +594,9 @@ function formatTime(dateStr: string): string {
 
 onMounted(() => {
   fetchRules()
+  if (isElectron) {
+    fetchCapabilities()
+    fetchCaptureStatus()
+  }
 })
 </script>

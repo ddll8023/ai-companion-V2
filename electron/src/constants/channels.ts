@@ -18,5 +18,12 @@ export const IPC_CHANNELS = {
   GET_APP_VERSION: 'get-app-version',
   /** 获取平台各能力状态 */
   GET_PLATFORM_CAPABILITIES: 'get-platform-capabilities',
+  // ── 活动采集（阶段 11: macOS） ──
+  /** 启动活动采集 */
+  ACTIVITY_CAPTURE_START: 'activity-capture:start',
+  /** 停止活动采集 */
+  ACTIVITY_CAPTURE_STOP: 'activity-capture:stop',
+  /** 获取采集状态 */
+  ACTIVITY_CAPTURE_STATUS: 'activity-capture:status',
   // 注意：不暴露 GET_DATA_DIR，Renderer 不得获得数据库路径
 } as const;

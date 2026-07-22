@@ -22,9 +22,15 @@ import * as http from 'http';
 import { IPC_CHANNELS } from './constants/channels';
 import {
   getPlatform,
-  getSupportedCapabilities,
+  getPlatformCapabilities,
   PlatformCapabilitiesResponse,
+  PermissionStatus,
+  PermissionNames,
+  PermissionState,
 } from './constants/platform';
+import {
+  getActivityCaptureManager,
+} from './services/activityCapture';
 
 // ── 常量 ──────────────────────────────────────────────────────────────
 
@@ -402,6 +408,50 @@ function saveSecureStore(store: Record<string, string>): void {
 
 // ── IPC 处理器 ───────────────────────────────────────────────────────
 
+/** 静态能力定义（异步权限检测失败时的降级 fallback）。 */
+function getStaticCapabilities(): PermissionState[] {
+  const platform = getPlatform();
+
+  return [
+    {
+      name: PermissionNames.ACTIVITY_CAPTURE,
+      status: platform === 'macos' ? PermissionStatus.AVAILABLE : PermissionStatus.NOT_IMPLEMENTED,
+      label: '活动采集',
+      description: '采集前台应用和窗口信息',
+    },
+    {
+      name: PermissionNames.ACCESSIBILITY,
+      status: platform === 'macos' ? PermissionStatus.PENDING_AUTH : PermissionStatus.NOT_IMPLEMENTED,
+      label: '辅助功能',
+      description: '获取前台应用和窗口标题',
+    },
+    {
+      name: PermissionNames.INPUT_MONITORING,
+      status: PermissionStatus.NOT_IMPLEMENTED,
+      label: '输入监控',
+      description: '监控键盘输入事件',
+    },
+    {
+      name: PermissionNames.SCREEN_RECORDING,
+      status: PermissionStatus.NOT_IMPLEMENTED,
+      label: '屏幕录制',
+      description: '屏幕截图和录制',
+    },
+    {
+      name: PermissionNames.NOTIFICATION,
+      status: PermissionStatus.AVAILABLE,
+      label: '系统通知',
+      description: '发送桌面通知',
+    },
+    {
+      name: PermissionNames.AUTOMATION,
+      status: PermissionStatus.NOT_IMPLEMENTED,
+      label: '自动化',
+      description: '控制其他应用',
+    },
+  ];
+}
+
 function setupIpcHandlers(): void {
   // API 代理：GET 请求
   ipcMain.handle(IPC_CHANNELS.API_GET, async (_event, url: string) => {
@@ -476,12 +526,45 @@ function setupIpcHandlers(): void {
     return app.getVersion();
   });
 
-  // 获取平台能力状态
-  ipcMain.handle(IPC_CHANNELS.GET_PLATFORM_CAPABILITIES, () => {
+  // 获取平台能力状态（异步检测 macOS 权限）
+  ipcMain.handle(IPC_CHANNELS.GET_PLATFORM_CAPABILITIES, async () => {
     const platform = getPlatform();
-    const capabilities = getSupportedCapabilities();
-    const result: PlatformCapabilitiesResponse = { platform, capabilities };
-    return result;
+    try {
+      const capabilities = await getPlatformCapabilities();
+      const result: PlatformCapabilitiesResponse = { platform, capabilities };
+      return result;
+    } catch {
+      // 降级：返回静态默认能力
+      const capabilities = getStaticCapabilities();
+      const result: PlatformCapabilitiesResponse = { platform, capabilities };
+      return result;
+    }
+  });
+
+  // ── 活动采集 IPC 处理器 ─────────────────────────────────────────
+  // 活动采集由 Main 进程管理（通过 ActivityCaptureManager），
+  // Renderer 只能通过受控 IPC 控制开关和查询状态。
+
+  // 启动活动采集
+  ipcMain.handle(IPC_CHANNELS.ACTIVITY_CAPTURE_START, async () => {
+    const capture = getActivityCaptureManager();
+    capture.setBackendInfo(backendPort, authToken);
+    await capture.refreshPrivacyRules();
+    const started = await capture.start();
+    return { success: started };
+  });
+
+  // 停止活动采集
+  ipcMain.handle(IPC_CHANNELS.ACTIVITY_CAPTURE_STOP, async () => {
+    const capture = getActivityCaptureManager();
+    await capture.stop();
+    return { success: true };
+  });
+
+  // 查询活动采集状态
+  ipcMain.handle(IPC_CHANNELS.ACTIVITY_CAPTURE_STATUS, () => {
+    const capture = getActivityCaptureManager();
+    return { success: true, status: capture.getStatus() };
   });
 }
 
@@ -560,6 +643,13 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
+  // 停止活动采集
+  try {
+    const capture = getActivityCaptureManager();
+    capture.stop();
+  } catch {
+    // 采集停止失败不影响退出
+  }
   stopPythonBackend();
 });
 

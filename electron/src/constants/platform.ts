@@ -3,6 +3,8 @@
  *
  * 统一 Windows 和 macOS 的系统能力差异表达。
  * 每项能力独立管理，不共用笼统的「系统权限」状态。
+ *
+ * macOS 下，能力检测会实时调用系统 API 判断权限状态。
  */
 
 /** 权限状态枚举（与设计文档一致）。 */
@@ -67,10 +69,137 @@ export function getPlatform(): PlatformType {
 }
 
 /**
- * 获取当前平台支持的能力列表（基础实现，不含实际权限检测）。
- * macOS 和 Windows 的具体权限检测在阶段 11/12 中分别实现。
+ * macOS 权限检测的结果缓存。
+ * 避免每次调用都执行 osascript，减少延迟。
  */
-export function getSupportedCapabilities(): PermissionState[] {
+let _capabilityCache: PermissionState[] | null = null;
+let _cacheTimestamp = 0;
+const CACHE_TTL_MS = 30000; // 30 秒缓存
+
+/**
+ * 清除能力状态缓存。
+ * 当用户可能已修改系统权限时调用（如当前台窗口变化后）。
+ */
+export function clearCapabilityCache(): void {
+  _capabilityCache = null;
+  _cacheTimestamp = 0;
+}
+
+/**
+ * 获取当前平台支持的能力列表（含实际权限检测）。
+ *
+ * macOS：通过 osascript 检测 Accessibility 等权限的真实状态。
+ * Windows：返回基础能力定义（阶段 12 完成具体检测）。
+ *
+ * 缓存 30 秒以减少重复的系统调用。
+ */
+export async function getPlatformCapabilities(): Promise<PermissionState[]> {
+  const platform = getPlatform();
+  const now = Date.now();
+
+  // 缓存有效期内直接返回
+  if (_capabilityCache && (now - _cacheTimestamp) < CACHE_TTL_MS) {
+    return _capabilityCache;
+  }
+
+  let capabilities: PermissionState[];
+
+  if (platform === 'macos') {
+    // macOS 下实时检测权限状态
+    capabilities = await getMacOSCapabilities();
+  } else {
+    // Windows 返回基础定义（阶段 12 实现真实检测）
+    capabilities = getWindowsCapabilities();
+  }
+
+  // 更新缓存
+  _capabilityCache = capabilities;
+  _cacheTimestamp = now;
+
+  return capabilities;
+}
+
+/**
+ * 获取所有权限状态的简化映射（key: name → status）。
+ * 同步版本，使用缓存或默认值。
+ */
+export function getCapabilityMap(): Record<PermissionName, PermissionStatusType> {
+  const caps = _capabilityCache || getDefaultCapabilities();
+  const map: Record<string, PermissionStatusType> = {};
+  for (const cap of caps) {
+    map[cap.name] = cap.status;
+  }
+  return map as Record<PermissionName, PermissionStatusType>;
+}
+
+/**
+ * 获取 macOS 的实时权限状态。
+ * 通过动态导入 macOSActivity 模块来避免在非 macOS 平台上引入依赖。
+ */
+async function getMacOSCapabilities(): Promise<PermissionState[]> {
+  try {
+    const { getAllMacOSCapabilities } = await import(
+      /* webpackIgnore: true */
+      '../platform/macOSActivity'
+    );
+    const capabilities = await getAllMacOSCapabilities();
+    return capabilities as PermissionState[];
+  } catch {
+    // 动态导入失败时返回默认值
+    console.warn('[Platform] macOS 权限检测模块加载失败，使用默认值');
+    return getDefaultCapabilities();
+  }
+}
+
+/**
+ * 获取 Windows 的基础能力定义（阶段 12 完善）。
+ */
+function getWindowsCapabilities(): PermissionState[] {
+  return [
+    {
+      name: PermissionNames.ACTIVITY_CAPTURE,
+      status: PermissionStatus.NOT_IMPLEMENTED,
+      label: '活动采集',
+      description: '采集前台应用和窗口信息',
+    },
+    {
+      name: PermissionNames.ACCESSIBILITY,
+      status: PermissionStatus.NOT_IMPLEMENTED,
+      label: '辅助功能',
+      description: '获取前台应用和窗口标题',
+    },
+    {
+      name: PermissionNames.INPUT_MONITORING,
+      status: PermissionStatus.NOT_IMPLEMENTED,
+      label: '输入监控',
+      description: '监控键盘输入事件',
+    },
+    {
+      name: PermissionNames.SCREEN_RECORDING,
+      status: PermissionStatus.NOT_IMPLEMENTED,
+      label: '屏幕录制',
+      description: '屏幕截图和录制',
+    },
+    {
+      name: PermissionNames.NOTIFICATION,
+      status: PermissionStatus.AVAILABLE,
+      label: '系统通知',
+      description: '发送桌面通知',
+    },
+    {
+      name: PermissionNames.AUTOMATION,
+      status: PermissionStatus.NOT_IMPLEMENTED,
+      label: '自动化',
+      description: '控制其他应用',
+    },
+  ];
+}
+
+/**
+ * 获取默认能力状态（fallback）。
+ * 在没有实时权限检测时使用。
+ */
+function getDefaultCapabilities(): PermissionState[] {
   const platform = getPlatform();
 
   return [
@@ -111,17 +240,4 @@ export function getSupportedCapabilities(): PermissionState[] {
       description: '控制其他应用',
     },
   ];
-}
-
-/**
- * 获取所有权限状态的简化映射（key: name → status）。
- * 用于快速判断某个权限是否可用。
- */
-export function getCapabilityMap(): Record<PermissionName, PermissionStatusType> {
-  const caps = getSupportedCapabilities();
-  const map: Record<string, PermissionStatusType> = {};
-  for (const cap of caps) {
-    map[cap.name] = cap.status;
-  }
-  return map as Record<PermissionName, PermissionStatusType>;
 }

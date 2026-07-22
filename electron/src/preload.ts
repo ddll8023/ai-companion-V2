@@ -5,6 +5,10 @@
  * - 只暴露受控白名单能力
  * - 不暴露通用 IPC 发送能力（不暴露 ipcRenderer.send）
  * - Renderer 无法获得端口、令牌、数据库路径和密钥明文
+ *
+ * 新增（阶段 11）：
+ * - 活动采集控制（start/stop/status）
+ * - 平台能力实时检测（异步）
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
@@ -61,7 +65,7 @@ const api = {
   getAppVersion: (): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
 
-  /** 获取平台各能力状态 */
+  /** 获取平台各能力状态（异步检测 macOS 权限） */
   getPlatformCapabilities: (): Promise<{
     platform: string;
     capabilities: Array<{
@@ -71,6 +75,30 @@ const api = {
       description: string | null;
     }>;
   }> => ipcRenderer.invoke(IPC_CHANNELS.GET_PLATFORM_CAPABILITIES),
+
+  // ── 活动采集控制（阶段 11） ───────────────────────────
+  /** 启动活动采集 */
+  startActivityCapture: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_CAPTURE_START),
+
+  /** 停止活动采集 */
+  stopActivityCapture: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_CAPTURE_STOP),
+
+  /** 获取活动采集状态 */
+  getActivityCaptureStatus: (): Promise<{
+    success: boolean;
+    status: {
+      running: boolean;
+      pollIntervalMs: number;
+      lastCaptureTime: string | null;
+      lastAppName: string | null;
+      eventsSubmitted: number;
+      eventsSkipped: number;
+      errors: number;
+      accessibilityAvailable: boolean;
+    };
+  }> => ipcRenderer.invoke(IPC_CHANNELS.ACTIVITY_CAPTURE_STATUS),
 
   // ── 事件监听 ────────────────────────────────────────────
   /** 监听后端服务状态变化 */
