@@ -30,14 +30,14 @@ def get_database_status(db: Session) -> dict[str, Any]:
             file_size_bytes = os.path.getsize(db_file)
 
         # 检查 FTS5 表
+        # 注意：使用 content 表（普通表）查询，避免 FTS5 影子表 COUNT 性能问题
         fts5_ready = False
         fts5_count = 0
         try:
-            result = db.execute(
-                text("SELECT COUNT(*) FROM memories_fts")
-            ).scalar()
+            fts5_count = db.execute(
+                text("SELECT COUNT(*) FROM memories_fts_content")
+            ).scalar() or 0
             fts5_ready = True
-            fts5_count = result or 0
         except Exception:
             fts5_ready = False
 
@@ -209,9 +209,10 @@ def get_activity_collection_status(db: Session) -> dict[str, Any]:
         active_rules = db.query(PrivacyRule).filter(
             PrivacyRule.is_active == True  # noqa: E712
         ).count()
+        # 使用 Python UTC 时间，避免 func.now() 时区偏移风险
+        today_str = datetime.now(timezone.utc).date().isoformat()
         today_count = db.query(Activity).filter(
-            func.date(Activity.created_at)
-            == func.date(func.now())
+            func.date(Activity.created_at) == today_str
         ).count()
         total_activities = db.query(Activity).count()
 
@@ -237,20 +238,27 @@ def get_data_directory_status() -> dict[str, Any]:
     writable = False
     file_count = 0
     total_size = 0
+    limited = False
 
     try:
         os.makedirs(data_dir, exist_ok=True)
         writable = os.access(data_dir, os.W_OK)
 
-        # 统计文件数和总大小
+        # 限制：最多扫描 10000 个文件，避免大量文件时阻塞 HTTP 响应
+        MAX_SCAN_FILES = 10000
         for root, _dirs, files in os.walk(data_dir):
             for fname in files:
+                if file_count >= MAX_SCAN_FILES:
+                    limited = True
+                    break
                 fpath = os.path.join(root, fname)
                 try:
                     file_count += 1
                     total_size += os.path.getsize(fpath)
                 except Exception:
                     pass
+            if file_count >= MAX_SCAN_FILES:
+                break
     except Exception:
         writable = False
 
@@ -259,6 +267,7 @@ def get_data_directory_status() -> dict[str, Any]:
         "writable": writable,
         "file_count": file_count,
         "total_size_bytes": total_size,
+        "scan_limited": limited,
     }
 
 
@@ -278,7 +287,7 @@ def get_system_status(
     return {
         "service": {
             "name": "AI Companion",
-            "version": "0.1.0",
+            "version": settings.APP_VERSION,
             "status": "running",
             "uptime": None,  # 后续可由进程管理跟踪
         },

@@ -65,6 +65,19 @@ const api = {
   getAppVersion: (): Promise<string> =>
     ipcRenderer.invoke(IPC_CHANNELS.GET_APP_VERSION),
 
+  /** 获取 Electron 运行时状态（PID、版本、运行时长等） */
+  getAppStatus: (): Promise<{
+    electronVersion: string;
+    nodeVersion: string;
+    chromeVersion: string;
+    appVersion: string;
+    pid: number;
+    platform: string;
+    appPath: string;
+    userDataPath: string;
+    uptime: number;
+  }> => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_STATUS),
+
   /** 获取平台各能力状态（异步检测 macOS 权限） */
   getPlatformCapabilities: (): Promise<{
     platform: string;

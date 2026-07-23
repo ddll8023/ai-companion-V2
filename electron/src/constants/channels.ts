@@ -16,6 +16,8 @@ export const IPC_CHANNELS = {
   BACKEND_STATUS: 'backend-status',
   GET_PLATFORM: 'get-platform',
   GET_APP_VERSION: 'get-app-version',
+  /** 获取 Electron 运行时状态（PID、版本、运行时长等） */
+  GET_APP_STATUS: 'get-app-status',
   /** 获取平台各能力状态 */
   GET_PLATFORM_CAPABILITIES: 'get-platform-capabilities',
   // ── 活动采集（阶段 11: macOS） ──

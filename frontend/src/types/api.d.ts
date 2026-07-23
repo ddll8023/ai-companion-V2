@@ -205,6 +205,18 @@ export interface ElectronAPI {
   keystoreHas: (key: string) => Promise<{ success: boolean; has: boolean }>
   getPlatform: () => Promise<string>
   getAppVersion: () => Promise<string>
+  /** 获取 Electron 运行时状态（PID、版本、运行时长等） */
+  getAppStatus: () => Promise<{
+    electronVersion: string
+    nodeVersion: string
+    chromeVersion: string
+    appVersion: string
+    pid: number
+    platform: string
+    appPath: string
+    userDataPath: string
+    uptime: number
+  }>
   /** 获取平台各能力状态 */
   getPlatformCapabilities: () => Promise<PlatformCapabilitiesResponse>
   onBackendStatus: (callback: (status: { ready: boolean }) => void) => void
@@ -700,6 +712,7 @@ export interface SystemStatusResponse {
     writable: boolean
     file_count: number
     total_size_bytes: number
+    scan_limited: boolean
   }
   background_tasks: {
     pending: number
@@ -742,4 +755,19 @@ export interface AuditLogResponse {
   detail: string | null
   result: number
   created_at: string | null
+}
+
+// ── Electron 运行时状态类型 ──────────────────────────────────────────
+
+/** Electron 运行时状态 */
+export interface ElectronAppStatus {
+  electronVersion: string
+  nodeVersion: string
+  chromeVersion: string
+  appVersion: string
+  pid: number
+  platform: string
+  appPath: string
+  userDataPath: string
+  uptime: number
 }

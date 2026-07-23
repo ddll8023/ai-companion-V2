@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # 日志级别
     LOG_LEVEL: str = "INFO"
 
+    # 应用版本（所有地方统一引用此处，避免硬编码）
+    APP_VERSION: str = "0.1.0"
+
     # 认证令牌（Electron 环境由主进程传入，浏览器开发模式为空字符串则跳过认证）
     AUTH_TOKEN: str = ""
 

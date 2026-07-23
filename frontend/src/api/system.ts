@@ -17,24 +17,24 @@ export async function getAuditLogs(params: {
   page?: number
   page_size?: number
 }) {
-  const res = await request.post<ApiResponse<PaginatedResponse<AuditLogResponse>>>('/api/v1/system/audit/list', params)
+  const res = await request.post<ApiResponse<PaginatedResponse<AuditLogResponse>>>('/api/v1/audit/list', params)
   return res.data
 }
 
 /** 获取审计操作类型列表 */
 export async function getAuditActions() {
-  const res = await request.get<ApiResponse<string[]>>('/api/v1/system/audit/actions')
+  const res = await request.get<ApiResponse<string[]>>('/api/v1/audit/actions')
   return res.data
 }
 
 /** 获取审计对象类型列表 */
 export async function getAuditTargetTypes() {
-  const res = await request.get<ApiResponse<string[]>>('/api/v1/system/audit/target-types')
+  const res = await request.get<ApiResponse<string[]>>('/api/v1/audit/target-types')
   return res.data
 }
 
 /** 获取审计日志统计 */
 export async function getAuditStats() {
-  const res = await request.get<ApiResponse<AuditStats>>('/api/v1/system/audit/stats')
+  const res = await request.get<ApiResponse<AuditStats>>('/api/v1/audit/stats')
   return res.data
 }

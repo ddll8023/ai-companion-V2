@@ -526,6 +526,21 @@ function setupIpcHandlers(): void {
     return app.getVersion();
   });
 
+  // 获取 Electron 运行时状态
+  ipcMain.handle(IPC_CHANNELS.GET_APP_STATUS, () => {
+    return {
+      electronVersion: process.versions.electron,
+      nodeVersion: process.versions.node,
+      chromeVersion: process.versions.chrome,
+      appVersion: app.getVersion(),
+      pid: process.pid,
+      platform: process.platform,
+      appPath: app.getAppPath(),
+      userDataPath: app.getPath('userData'),
+      uptime: Math.floor(process.uptime()),
+    };
+  });
+
   // 获取平台能力状态（异步检测 macOS 权限）
   ipcMain.handle(IPC_CHANNELS.GET_PLATFORM_CAPABILITIES, async () => {
     const platform = getPlatform();

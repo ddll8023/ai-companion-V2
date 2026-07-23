@@ -88,7 +88,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="AI Companion",
-    version="0.1.0",
+    version=settings.APP_VERSION,
     description="AI Companion 本地业务服务",
     lifespan=lifespan,
 )
@@ -180,7 +180,7 @@ def _health_data() -> dict:
     return {
         "status": "running",
         "service": "AI Companion",
-        "version": "0.1.0",
+        "version": settings.APP_VERSION,
         "database": {
             "ready": _db_ready,
             "migration_completed": _db_migration_completed,
