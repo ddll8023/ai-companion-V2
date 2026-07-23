@@ -50,6 +50,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '隐私设置', icon: 'shield' },
     component: () => import('@/pages/SettingsPrivacy.vue'),
   },
+  {
+    path: '/settings/data',
+    name: 'DataManagement',
+    meta: { title: '数据管理', icon: 'database' },
+    component: () => import('@/pages/DataManagement.vue'),
+  },
 ]
 
 const router = createRouter({

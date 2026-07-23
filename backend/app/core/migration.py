@@ -27,9 +27,10 @@ _VERSION_TABLE = "_db_version"
 #   v4 — 未记录变更
 #   v5 — 添加: memories, memory_sources, memory_revisions
 #   v6 — 添加: memory_references, memories_fts (FTS5 虚拟表)
+#   v7 — 添加: data_exports, backup_records, retention_policies（数据治理模块）
 #
 # 注意: 开发阶段版本不匹配时会清空数据重建，生产阶段需实现逐版本迁移。
-_CURRENT_VERSION: int = 6
+_CURRENT_VERSION: int = 7
 
 
 def _ensure_version_table(db: Session):

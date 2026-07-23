@@ -535,3 +535,127 @@ export interface BehaviorStatsResponse {
   app_usage: { app_name: string; total_minutes: number; percentage: number }[]
   chat_activity: { date: string; message_count: number }[]
 }
+
+// ── 数据治理类型 ──────────────────────────────────────────────────────────────
+
+/** 数据导出请求 */
+export interface DataExportRequest {
+  export_type: 'full' | 'partial'
+  scope?: string[]
+  start_time?: string
+  end_time?: string
+}
+
+/** 数据导出响应 */
+export interface DataExportResponse {
+  id: number
+  export_type: string
+  scope: string | null
+  start_time: string | null
+  end_time: string | null
+  status: string
+  file_path: string
+  file_size_bytes: number | null
+  record_count: number | null
+  error_message: string | null
+  created_at: string | null
+}
+
+/** 创建备份请求 */
+export interface BackupCreateRequest {
+  backup_type: 'manual' | 'auto'
+}
+
+/** 备份响应 */
+export interface BackupResponse {
+  id: number
+  backup_type: string
+  file_path: string
+  file_size_bytes: number | null
+  status: string
+  error_message: string | null
+  restored_at: string | null
+  created_at: string | null
+}
+
+/** 备份列表查询参数 */
+export interface BackupListQuery {
+  page?: number
+  page_size?: number
+}
+
+/** 恢复请求 */
+export interface RestoreRequest {
+  backup_id: number
+}
+
+/** 恢复响应 */
+export interface RestoreResponse {
+  backup_id: number
+  status: string
+  file_path: string
+  message: string
+  restored_at: string
+  database_was_recreated: boolean
+}
+
+/** 创建保留策略请求 */
+export interface RetentionPolicyCreate {
+  target_type: string
+  retention_days: number
+  is_enabled?: boolean
+  description?: string
+}
+
+/** 更新保留策略请求 */
+export interface RetentionPolicyUpdate {
+  retention_days?: number
+  is_enabled?: boolean
+  description?: string
+}
+
+/** 保留策略响应 */
+export interface RetentionPolicyResponse {
+  id: number
+  target_type: string
+  retention_days: number
+  is_enabled: boolean
+  description: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 清除全部数据请求 */
+export interface ClearDataRequest {
+  confirm_key: string
+}
+
+/** 清除全部数据响应 */
+export interface ClearDataResponse {
+  cleared_tables: string[]
+  cleared_backups: boolean
+  cleared_exports: boolean
+}
+
+/** 数据量统计响应 */
+export interface DataVolumeStats {
+  sessions: number
+  messages: number
+  memories: number
+  memory_sources: number
+  memory_revisions: number
+  memory_references: number
+  activities: number
+  privacy_rules: number
+  goals: number
+  tasks: number
+  profiles: number
+  profile_sources: number
+  profile_revisions: number
+  audit_logs: number
+  background_tasks: number
+  model_configs: number
+  data_exports: number
+  backup_records: number
+  retention_policies: number
+}
