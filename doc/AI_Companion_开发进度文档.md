@@ -869,7 +869,7 @@ Renderer（前端）不得获得以下内容：
 | 10 | 跨平台活动采集基座 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | Activity/PrivacyRule 模型/Schema/Service/API、隐私规则引擎(全局暂停/应用黑名单/白名单/关键字/时段/脱敏/临时暂停)、活动事件批量提交/去重/脱敏、Electron 平台能力类型/权限枚举/IPC通道、前端活动记录页面(筛选/统计/删除/清空)、隐私设置页面(规则CRUD/类型提示/分类统计) |
 | 11 | macOS 活动采集适配 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | macOS 活动检测模块(osascript 获取前台应用/窗口标题、ioreg 获取空闲时间)、ActivityCaptureManager(采集轮询管理/本地隐私缓存硬阻断/事件去重/批量提交)、HTTP 客户端、平台能力实时检测(Accessibility/Screen Recording 权限状态)、IPC 通道(activity-capture:start/stop/status)、Preload 暴露采集控制、前端隐私页面增加采集控制面板和权限状态展示、应用退出自动停止采集 |
 | 12 | Windows 活动采集适配 | ⏸ 已搁置 | — | — | 已确认保持 placeholder 占位状态，不开发 Windows 版本 |
-| 13 | 用户画像与行为理解 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | Profile/ProfileSource/ProfileRevision 三表模型、Schema(Literal枚举约束)、Service(CRUD+状态机confirm/correct/reject/delete+behavior-stats聚合查询)、API路由7个端点+extract手动触发+行为统计独立路由、后台任务profile.extract(LLM提取+证据约束+去重+置信度上限)、activities覆盖索引(created_at,app_name)、前端UserUnderstanding页面(画像卡片+类别筛选+行为统计条形图+详情弹窗+纠正对话框)、路由/understanding+侧边栏导航 |
+| 13 | 用户画像与行为理解 | ✅ 已完成 | 2026-07-22 | 2026-07-23 | Profile/ProfileSource/ProfileRevision 三表模型、Schema(Literal枚举约束)、Service(CRUD+状态机confirm/correct/reject/delete+behavior-stats聚合查询)、API路由7个端点+extract手动触发+行为统计独立路由、后台任务profile.extract(LLM提取+证据约束+去重+置信度上限)、activities覆盖索引(created_at,app_name)、前端UserUnderstanding页面(画像卡片+类别筛选+行为统计条形图+详情弹窗+纠正对话框)、路由/understanding+侧边栏导航。修复：API Key 改用 api_key_cache 进程缓存替代前端传参；记忆确认/纠正后自动触发画像提取；浏览器降级提示与行为统计错误展示；source_version 字段正确赋值 |
 | 14 | 完整数据治理 | ⏳ 待开发 | — | — | |
 | 15 | 审计、系统状态与整体打磨 | ⏳ 待开发 | — | — | |
 
