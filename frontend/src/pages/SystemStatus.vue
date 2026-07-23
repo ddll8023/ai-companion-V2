@@ -8,6 +8,7 @@ import type {
 import LoadingState from '@/components/custom/LoadingState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
+import { formatTime, formatDuration } from '@/utils/format'
 
 const loading = ref(true)
 const error = ref<string | null>(null)
@@ -76,19 +77,6 @@ function formatBytes(bytes: number): string {
   const units = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(1024))
   return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`
-}
-
-function formatTime(iso: string | null): string {
-  if (!iso) return '-'
-  return new Date(iso).toLocaleString('zh-CN')
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds} 秒`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒`
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  return `${h} 时 ${m} 分`
 }
 
 /** 将能力状态映射为颜色类 */

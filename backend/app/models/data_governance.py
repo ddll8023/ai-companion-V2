@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
 
 from app.core.database import Base
 
@@ -40,7 +40,7 @@ class DataExport(Base):
         default="completed",
         comment="状态: completed=完成, failed=失败",
     )
-    file_path = Column(String(512), nullable=False, comment="导出文件路径")
+    file_path = Column(String(512), nullable=True, comment="导出文件路径（导出失败时可为空）")
     file_size_bytes = Column(Integer, nullable=True, comment="导出文件大小（字节）")
     record_count = Column(Integer, nullable=True, comment="导出记录数")
     error_message = Column(String(256), nullable=True, comment="错误信息")
@@ -108,7 +108,7 @@ class RetentionPolicy(Base):
         comment="保留天数（超过此天数的数据将被清理）",
     )
     is_enabled = Column(
-        Integer, nullable=False, default=1, comment="是否启用: 0=禁用, 1=启用",
+        Boolean, nullable=False, default=True, comment="是否启用",
     )
     description = Column(String(256), nullable=True, comment="策略描述")
     created_at = Column(

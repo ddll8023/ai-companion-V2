@@ -94,3 +94,19 @@ def get_global() -> str | None:
         API Key 字符串，不存在或已过期时返回 None
     """
     return pop(_GLOBAL_CACHE_KEY)
+
+
+def peek_global() -> str | None:
+    """查看全局缓存的 API Key（只读不删，可重复读取）。
+
+    Returns:
+        API Key 字符串，不存在或已过期时返回 None
+    """
+    with _lock:
+        entry = _cache.get(_GLOBAL_CACHE_KEY)
+        if entry is None:
+            return None
+        api_key, expire_at = entry
+        if time.time() > expire_at:
+            return None
+        return api_key

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Index, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, func
 
 from app.core.database import Base
 
@@ -30,7 +30,7 @@ class Activity(Base):
         Integer, nullable=True, comment="活动持续时长（秒）",
     )
     is_idle = Column(
-        Integer, nullable=False, default=0, comment="用户是否空闲: 0=活跃, 1=空闲",
+        Boolean, nullable=False, default=False, comment="用户是否空闲",
     )
     platform = Column(
         String(16), nullable=False, comment="采集来源平台: macos/windows",
@@ -86,7 +86,7 @@ class PrivacyRule(Base):
     )
     description = Column(String(256), nullable=True, comment="规则描述")
     is_active = Column(
-        Integer, nullable=False, default=1, comment="是否启用: 0=禁用, 1=启用",
+        Boolean, nullable=False, default=True, comment="是否启用",
     )
     priority = Column(
         Integer, nullable=False, default=0, comment="优先级（数值越高优先）",

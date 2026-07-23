@@ -17,6 +17,7 @@ class ChatSession(Base):
     id = Column(Integer, primary_key=True, autoincrement=True, comment="主键 ID")
     title = Column(String(128), nullable=False, default="新对话", comment="会话标题")
     model_name = Column(String(128), nullable=True, comment="使用的模型名称")
+    model_provider = Column(String(32), nullable=True, comment="使用的模型供应商")
     created_at = Column(DateTime, server_default=func.now(), nullable=False, comment="创建时间")
     updated_at = Column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False, comment="更新时间",
@@ -46,6 +47,7 @@ class Message(Base):
     )
     error_message = Column(String(256), nullable=True, comment="错误信息（可选）")
     model_name = Column(String(128), nullable=True, comment="生成此消息的模型名称")
+    model_provider = Column(String(32), nullable=True, comment="生成此消息的模型供应商")
     token_count = Column(Integer, nullable=True, comment="token 数量（可选）")
     created_at = Column(DateTime, server_default=func.now(), nullable=False, comment="创建时间")
 

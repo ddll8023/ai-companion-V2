@@ -1,9 +1,12 @@
 import { useApi } from '@/composables/useApi'
 import type {
   BehaviorStatsQuery,
+  BehaviorStatsResponse,
   PaginatedResponse,
   Profile,
   ProfileCorrect,
+  ProfileCreate,
+  ProfileDetail,
   ProfileListQuery,
 } from '@/types/api'
 

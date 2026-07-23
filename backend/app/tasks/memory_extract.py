@@ -60,8 +60,7 @@ def handle_memory_extract(payload: dict | None) -> str | None:
         logger.warning("记忆提取任务 payload 为空")
         return json.dumps({"extracted": 0, "error": "payload 为空"})
 
-    db = get_background_db_session()
-    try:
+    with get_background_db_session() as db:
         session_id = payload.get("session_id")
         user_message_id = payload.get("user_message_id")
         assistant_message_id = payload.get("assistant_message_id")
@@ -96,8 +95,6 @@ def handle_memory_extract(payload: dict | None) -> str | None:
 
         # 调用模型提取记忆
         return _do_extract(db, session_id, messages, source_ids, source_version, api_key)
-    finally:
-        db.close()
 
 
 def _get_conversation_messages(

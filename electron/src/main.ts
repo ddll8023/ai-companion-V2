@@ -158,11 +158,8 @@ function apiRequest(method: string, urlPath: string, body?: unknown): Promise<un
       },
     );
 
-    req.on('error', () => {
-      resolve({
-        code: 5001,
-        message: '本地服务不可用',
-      });
+    req.on('error', (err) => {
+      reject(new Error(`本地服务不可用: ${err.message}`));
     });
 
     if (opts.body) {
@@ -458,7 +455,11 @@ function setupIpcHandlers(): void {
     if (!backendPort || !isBackendReady) {
       return { code: 5001, message: '本地服务尚未就绪' };
     }
-    return apiRequest('GET', url);
+    try {
+      return await apiRequest('GET', url);
+    } catch (e: any) {
+      return { code: 5001, message: e.message || '本地服务不可用' };
+    }
   });
 
   // API 代理：POST 请求
@@ -466,7 +467,11 @@ function setupIpcHandlers(): void {
     if (!backendPort || !isBackendReady) {
       return { code: 5001, message: '本地服务尚未就绪' };
     }
-    return apiRequest('POST', url, data);
+    try {
+      return await apiRequest('POST', url, data);
+    } catch (e: any) {
+      return { code: 5001, message: e.message || '本地服务不可用' };
+    }
   });
 
   // API 代理：PUT 请求
@@ -474,7 +479,11 @@ function setupIpcHandlers(): void {
     if (!backendPort || !isBackendReady) {
       return { code: 5001, message: '本地服务尚未就绪' };
     }
-    return apiRequest('PUT', url, data);
+    try {
+      return await apiRequest('PUT', url, data);
+    } catch (e: any) {
+      return { code: 5001, message: e.message || '本地服务不可用' };
+    }
   });
 
   // API 代理：DELETE 请求
@@ -482,7 +491,11 @@ function setupIpcHandlers(): void {
     if (!backendPort || !isBackendReady) {
       return { code: 5001, message: '本地服务尚未就绪' };
     }
-    return apiRequest('DELETE', url);
+    try {
+      return await apiRequest('DELETE', url);
+    } catch (e: any) {
+      return { code: 5001, message: e.message || '本地服务不可用' };
+    }
   });
 
   // 安全存储：设置密钥

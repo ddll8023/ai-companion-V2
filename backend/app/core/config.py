@@ -41,7 +41,10 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
-        return json.loads(self.CORS_ORIGINS)
+        try:
+            return json.loads(self.CORS_ORIGINS)
+        except (json.JSONDecodeError, TypeError):
+            return ["*"]
 
     @property
     def resolved_data_dir(self) -> str:

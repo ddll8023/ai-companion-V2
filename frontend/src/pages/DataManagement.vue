@@ -432,6 +432,7 @@ import { onMounted, reactive, ref, computed } from 'vue'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
+import { formatTime } from '@/utils/format'
 import {
   getDataVolume,
   exportData,
@@ -774,15 +775,6 @@ function backupStatusLabel(st: string): string {
     case 'restoring': return '恢复中'
     case 'failed': return '失败'
     default: return st
-  }
-}
-
-function formatTime(dateStr: string | null): string {
-  if (!dateStr) return ''
-  try {
-    return new Date(dateStr).toLocaleString()
-  } catch {
-    return dateStr
   }
 }
 

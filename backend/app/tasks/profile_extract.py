@@ -73,12 +73,14 @@ def handle_profile_extract(payload: dict | None) -> str | None:
         logger.warning("画像提取任务 payload 为空")
         return json.dumps({"extracted": 0, "error": "payload 为空"})
 
-    db = get_background_db_session()
-    try:
+    with get_background_db_session() as db:
         memory_ids = payload.get("memory_ids")
 
         # 从进程内存缓存获取 API Key（不经过前端/Renderer）
-        api_key = api_key_cache.get_global()
+        api_key = api_key_cache.peek_global()
+        if not api_key:
+            # 回退：尝试一次性取出（兼容旧逻辑）
+            api_key = api_key_cache.get_global()
         if not api_key:
             logger.warning("画像提取: API Key 缓存未命中（请先进行一次对话）")
             return json.dumps({"extracted": 0, "error": "API Key 不可用（请先进行一次对话）"})
@@ -91,8 +93,6 @@ def handle_profile_extract(payload: dict | None) -> str | None:
 
         # 调用模型提取画像
         return _do_extract(db, memories, api_key)
-    finally:
-        db.close()
 
 
 # ── 辅助函数 ─────────────────────────────────────────────────────────────

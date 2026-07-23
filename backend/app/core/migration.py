@@ -62,30 +62,36 @@ def _set_db_version(db: Session, version: int):
     db.commit()
 
 
-def _ensure_fts5_table(db: Session):
-    """创建 FTS5 虚拟表（如不存在）并重建索引。
+def _ensure_fts5_table(db: Session, rebuild: bool = False):
+    """创建或同步 FTS5 虚拟表。
 
     FTS5 用于记忆全文检索，不通过 SQLAlchemy ORM 管理。
+
+    Args:
+        db: 数据库会话
+        rebuild: 是否全量重建索引（仅新数据库创建或索引损坏时 True）
     """
     try:
-        # 创建 FTS5 表
-        # content 列用于搜索, memory_id 和 type 为 unindexed 辅助列
+        # 创建 FTS5 表（幂等操作，表已存在则跳过）
         db.execute(text(
             "CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts "
             "USING fts5(content, memory_id UNINDEXED, type UNINDEXED)"
         ))
         db.commit()
 
-        # 重建索引：清除后从已确认的记忆中重新插入
-        db.execute(text("DELETE FROM memories_fts"))
-        db.commit()
-        db.execute(text(
-            "INSERT INTO memories_fts (content, memory_id, type) "
-            "SELECT content, id, type FROM memories "
-            "WHERE status IN ('confirmed', 'corrected')"
-        ))
-        db.commit()
-        logger.info("FTS5 索引已重建")
+        if rebuild:
+            # 全量重建：清除后从已确认的记忆中重新插入
+            db.execute(text("DELETE FROM memories_fts"))
+            db.commit()
+            db.execute(text(
+                "INSERT INTO memories_fts (content, memory_id, type) "
+                "SELECT content, id, type FROM memories "
+                "WHERE status IN ('confirmed', 'corrected')"
+            ))
+            db.commit()
+            logger.info("FTS5 索引已全量重建")
+        else:
+            logger.debug("FTS5 表已就绪（增量维护）")
     except Exception as exc:
         logger.warning(f"FTS5 表创建失败（检索功能降级）: {exc}")
 
@@ -112,19 +118,25 @@ def ensure_schema(db: Session, base_metadata, db_file_path: str):
     if is_new:
         logger.info("新数据库，创建所有表")
         base_metadata.create_all(bind=db.get_bind())
-        _ensure_fts5_table(db)
+        _ensure_fts5_table(db, rebuild=True)
         _set_db_version(db, _CURRENT_VERSION)
         logger.info(f"数据库初始化完成，版本 v{_CURRENT_VERSION}")
         return True
 
     current_version = _get_db_version(db)
+    if current_version is None:
+        # 版本表存在但无记录 → 视为新数据库
+        logger.info("版本表为空，按新数据库处理")
+        _set_db_version(db, _CURRENT_VERSION)
+        _ensure_fts5_table(db, rebuild=True)
+        return True
     logger.info(f"当前数据库版本: v{current_version}，期望版本: v{_CURRENT_VERSION}")
 
     if current_version == _CURRENT_VERSION:
         # 版本匹配但仍需执行 create_all 以发现新增模型表
         # create_all 是幂等操作，不会重建已存在的表
         base_metadata.create_all(bind=db.get_bind())
-        _ensure_fts5_table(db)
+        _ensure_fts5_table(db, rebuild=False)
         logger.info("数据库版本匹配，已同步新增表（如有）")
         return True
 
@@ -141,7 +153,7 @@ def ensure_schema(db: Session, base_metadata, db_file_path: str):
     )
     base_metadata.drop_all(bind=db.get_bind())
     base_metadata.create_all(bind=db.get_bind())
-    _ensure_fts5_table(db)
+    _ensure_fts5_table(db, rebuild=True)
     _set_db_version(db, _CURRENT_VERSION)
     logger.info(f"数据库重建完成，版本 v{_CURRENT_VERSION}")
     return True

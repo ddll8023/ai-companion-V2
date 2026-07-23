@@ -36,6 +36,11 @@ function extractData<T>(axiosPromise: Promise<{ data: ApiResponse<T> }>): Promis
   return axiosPromise.then(res => res.data)
 }
 
+/** 从运行时环境中获取模型 API Key 的键名。 */
+function getKeyName(configId: number): string {
+  return `model_key_${configId}`
+}
+
 /** HTTP 适配器（浏览器开发模式） */
 const httpAdapter: CommunicationAdapter = {
   get: <T>(url: string) => extractData(request.get<ApiResponse<T>>(url)),
@@ -43,19 +48,33 @@ const httpAdapter: CommunicationAdapter = {
   put: <T>(url: string, data?: unknown) => extractData(request.put<ApiResponse<T>>(url, data)),
   delete: <T>(url: string) => extractData(request.delete<ApiResponse<T>>(url)),
 
-  resolveApiKey: async (_configId: number) => {
-    // 浏览器模式：无法从安全存储获取，返回 undefined
-    return undefined
+  resolveApiKey: async (configId: number) => {
+    // 浏览器模式：从 localStorage 读取（开发时手动设置）
+    try {
+      return localStorage.getItem(getKeyName(configId)) || undefined
+    } catch {
+      return undefined
+    }
   },
 
-  saveApiKey: async (_configId: number, _apiKey: string) => {
-    // 浏览器模式：不支持安全存储，返回 false
-    return false
+  saveApiKey: async (configId: number, apiKey: string) => {
+    // 浏览器模式：保存到 localStorage（开发时使用）
+    try {
+      localStorage.setItem(getKeyName(configId), apiKey)
+      return true
+    } catch {
+      return false
+    }
   },
 
-  deleteApiKey: async (_configId: number) => {
-    // 浏览器模式：不支持安全存储，返回 false
-    return false
+  deleteApiKey: async (configId: number) => {
+    // 浏览器模式：从 localStorage 删除
+    try {
+      localStorage.removeItem(getKeyName(configId))
+      return true
+    } catch {
+      return false
+    }
   },
 }
 
@@ -66,28 +85,28 @@ const ipcAdapter: CommunicationAdapter = {
     if (result.code !== 0) {
       throw new Error(result.message || '请求失败')
     }
-    return result as unknown as ApiResponse<T>
+    return result as ApiResponse<T>
   },
   post: async <T>(url: string, data?: unknown) => {
     const result = await window.electronAPI!.apiPost<T>(url, data)
     if (result.code !== 0) {
       throw new Error(result.message || '请求失败')
     }
-    return result as unknown as ApiResponse<T>
+    return result as ApiResponse<T>
   },
   put: async <T>(url: string, data?: unknown) => {
     const result = await window.electronAPI!.apiPut<T>(url, data)
     if (result.code !== 0) {
       throw new Error(result.message || '请求失败')
     }
-    return result as unknown as ApiResponse<T>
+    return result as ApiResponse<T>
   },
   delete: async <T>(url: string) => {
     const result = await window.electronAPI!.apiDelete<T>(url)
     if (result.code !== 0) {
       throw new Error(result.message || '请求失败')
     }
-    return result as unknown as ApiResponse<T>
+    return result as ApiResponse<T>
   },
 
   resolveApiKey: async (configId: number) => {

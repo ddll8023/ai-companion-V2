@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
 
 from app.core.database import Base
 
@@ -19,8 +19,8 @@ class ModelConfig(Base):
     provider = Column(String(32), nullable=False, comment="模型供应商: openai/anthropic/openai-compatible")
     model_name = Column(String(128), nullable=False, comment="模型名称")
     api_base = Column(String(256), nullable=True, comment="API 地址（可选）")
-    is_active = Column(Integer, nullable=False, default=0, comment="是否为激活配置: 0=否, 1=是")
-    has_key = Column(Integer, nullable=False, default=0, comment="是否已配置密钥: 0=否, 1=是")
+    is_active = Column(Boolean, nullable=False, default=False, comment="是否为激活配置")
+    has_key = Column(Boolean, nullable=False, default=False, comment="是否已配置密钥")
     status = Column(String(16), nullable=False, default="inactive", comment="状态: inactive/active/error")
     error_message = Column(String(256), nullable=True, comment="错误信息（可选）")
     created_at = Column(DateTime, server_default=func.now(), nullable=False, comment="创建时间")

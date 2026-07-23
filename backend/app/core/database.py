@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
@@ -51,12 +52,17 @@ def get_db():
             yield db
         except Exception as exc:
             db.rollback()
-            raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
+            raise ServiceException(ErrorCode.INTERNAL_ERROR, str(exc)) from exc
 
 
+@contextmanager
 def get_background_db_session():
-    """获取后台任务数据库会话。"""
-    return SessionLocal()
+    """获取后台任务数据库会话（上下文管理器，自动关闭）。"""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 
 def commit_or_rollback(db: Session):
@@ -65,4 +71,4 @@ def commit_or_rollback(db: Session):
         db.commit()
     except Exception as exc:
         db.rollback()
-        raise ServiceException(ErrorCode.INTERNAL_ERROR, "操作失败") from exc
+        raise ServiceException(ErrorCode.INTERNAL_ERROR, str(exc)) from exc

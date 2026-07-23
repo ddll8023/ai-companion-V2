@@ -122,6 +122,7 @@ def _create_assistant_placeholder(
     db: Session,
     session_id: int,
     model_name: str | None,
+    model_provider: str | None = None,
 ) -> Message:
     """创建助手占位消息（初始状态为 generating）。"""
     msg = Message(
@@ -130,6 +131,7 @@ def _create_assistant_placeholder(
         content="",
         status="generating",
         model_name=model_name,
+        model_provider=model_provider,
     )
     db.add(msg)
     commit_or_rollback(db)
@@ -222,13 +224,15 @@ def initialize_chat_stream(
         return {"error": "缺少 API Key"}
 
     # 创建助手占位消息
-    assistant_msg = _create_assistant_placeholder(db, session_id, active_config.model_name)
+    assistant_msg = _create_assistant_placeholder(db, session_id, active_config.model_name, active_config.provider)
 
-    # 获取历史消息并构造模型调用消息列表
+    # 获取历史消息并构造模型调用消息列表（过滤掉占位消息）
     history_messages = get_messages(db, session_id)
-    model_messages = []
-    for msg in history_messages:
-        model_messages.append({"role": msg.role, "content": msg.content})
+    model_messages = [
+        {"role": msg.role, "content": msg.content}
+        for msg in history_messages
+        if msg.status != "generating"
+    ]
 
     # 检索相关长期记忆（个性化上下文）
     memory_context = retrieval.retrieve_memories(
@@ -256,7 +260,7 @@ def initialize_chat_stream(
             "model_name": active_config.model_name,
             "api_base": active_config.api_base,
         },
-        "model_messages": model_messages[:-1],  # 去掉占位消息
+        "model_messages": model_messages,
         "api_key": resolved_key,
         "system_prompt": system_prompt,  # 个性化系统提示词
         "memory_context": memory_context,  # 检索到的记忆（用于引用记录）
@@ -311,8 +315,7 @@ def run_chat_stream(
             yield {"type": "token", "content": token}
 
         # 完成：使用独立 session 持久化
-        db = get_background_db_session()
-        try:
+        with get_background_db_session() as db:
             _complete_assistant_message(db, assistant_msg_id, collected_content)
 
             # 对话完成后创建候选记忆提取后台任务（不再传入 api_key）
@@ -331,46 +334,35 @@ def run_chat_stream(
                     )
                 except Exception as exc:
                     logger.warning(f"保存记忆引用失败（不影响对话）: {exc}")
-        finally:
-            db.close()
         yield {"type": "done", "message_id": assistant_msg_id}
 
     except GeneratorExit:
         # 客户端断开连接 → 中止生成
         logger.warning(f"客户端断开连接，生成中止: session_id={session_id}")
-        db = get_background_db_session()
-        try:
+        with get_background_db_session() as db:
             if collected_content:
                 _abort_assistant_message(db, assistant_msg_id, collected_content)
             else:
                 _fail_assistant_message(db, assistant_msg_id, "用户中止")
-        finally:
-            db.close()
         # 清理 API Key 缓存
         api_key_cache.pop(api_key_cache_key)
         raise
 
     except ServiceException as e:
-        db = get_background_db_session()
-        try:
+        with get_background_db_session() as db:
             if collected_content:
                 _abort_assistant_message(db, assistant_msg_id, collected_content)
             else:
                 _fail_assistant_message(db, assistant_msg_id, e.message)
-        finally:
-            db.close()
         api_key_cache.pop(api_key_cache_key)
         yield {"type": "error", "message": e.message}
     except Exception as e:
         logger.error(f"对话流式调用异常: {e}", exc_info=True)
-        db = get_background_db_session()
-        try:
+        with get_background_db_session() as db:
             if collected_content:
                 _abort_assistant_message(db, assistant_msg_id, collected_content)
             else:
                 _fail_assistant_message(db, assistant_msg_id, str(e))
-        finally:
-            db.close()
         api_key_cache.pop(api_key_cache_key)
         yield {"type": "error", "message": f"对话生成失败: {e!s}"}
 
@@ -444,7 +436,7 @@ def _try_create_memory_extract_task(
         task_data = TaskCreate(
             task_type="memory.extract",
             payload=json.dumps(payload),
-            dedup_key=f"memory.extract:session:{session_id}",
+            dedup_key=f"memory.extract:session:{session_id}:msg:{assistant_message_id}",
             priority=0,
             source_version=f"md5_{content_md5}",
         )

@@ -392,6 +392,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
+import { formatTime } from '@/utils/format'
 import {
   confirmProfile,
   correctProfile,
@@ -640,15 +641,6 @@ function sourceTypeLabel(type: string): string {
     activity: '活动来源',
   }
   return labels[type] || type
-}
-
-function formatTime(dateStr: string | null): string {
-  if (!dateStr) return ''
-  try {
-    return new Date(dateStr).toLocaleString()
-  } catch {
-    return dateStr
-  }
 }
 
 // 计算最大值的辅助属性（用于条形图比例）

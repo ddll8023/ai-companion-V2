@@ -77,11 +77,8 @@ class TaskScheduler:
 
     def _process_pending(self) -> None:
         """领取并执行待处理任务。"""
-        db = get_background_db_session()
-        try:
+        with get_background_db_session() as db:
             tasks = services_task.claim_pending_tasks(db, self.batch_size)
-        finally:
-            db.close()
 
         for t in tasks:
             if not self._running:
@@ -90,10 +87,7 @@ class TaskScheduler:
 
     def _recover_tasks(self) -> None:
         """恢复超时未完成的任务。"""
-        db = get_background_db_session()
-        try:
+        with get_background_db_session() as db:
             recovered = services_task.recover_stuck_tasks(db)
             if recovered:
                 logger.info(f"恢复超时任务数: {recovered}")
-        finally:
-            db.close()

@@ -20,7 +20,7 @@ import json
 import math
 from datetime import datetime, timedelta
 
-from sqlalchemy import and_, desc, func, select, update
+from sqlalchemy import and_, desc, func, select, text, update
 from sqlalchemy.orm import Session
 
 from app.core.database import commit_or_rollback
@@ -76,50 +76,45 @@ def create_task(db: Session, data: TaskCreate) -> TaskResponse:
 
 
 def claim_pending_tasks(db: Session, batch_size: int = _CLAIM_BATCH_SIZE) -> list[BackgroundTask]:
-    """查领取待处理或待重试的任务。"""
+    """原子领取待处理或待重试的任务。
+
+    使用单条 UPDATE + 子查询原子操作，避免并发领取同一任务。
+    """
     now = datetime.now()
 
-    pending_tasks = db.scalars(
-        select(BackgroundTask)
-        .where(
-            BackgroundTask.status.in_(["pending", "retrying"]),
-            BackgroundTask.scheduled_at <= now,
-        )
-        .order_by(desc(BackgroundTask.priority), BackgroundTask.id)
-        .limit(batch_size)
-    ).all()
-
-    if not pending_tasks:
-        return []
-
-    task_ids = [t.id for t in pending_tasks]
-
-    result = db.execute(
-        update(BackgroundTask)
-        .where(
-            BackgroundTask.id.in_(task_ids),
-            BackgroundTask.status.in_(["pending", "retrying"]),
-        )
-        .values(
-            status="processing",
-            started_at=now,
-            retry_count=BackgroundTask.retry_count + 1,
-        )
+    # 原子 UPDATE：子查询选取 → UPDATE 状态
+    db.execute(
+        text("""
+            UPDATE background_tasks
+            SET status = 'processing',
+                started_at = :now,
+                retry_count = retry_count + 1
+            WHERE id IN (
+                SELECT id FROM background_tasks
+                WHERE status IN ('pending', 'retrying')
+                  AND scheduled_at <= :now
+                ORDER BY priority DESC, id ASC
+                LIMIT :limit
+            )
+        """),
+        {"now": now, "limit": batch_size},
     )
-
-    if result.rowcount == 0:
-        return []
-
     commit_or_rollback(db)
 
+    # 重新查询已被标记为 processing 的任务（刚被 UPDATE 的）
     claimed = list(
         db.scalars(
-            select(BackgroundTask).where(
-                BackgroundTask.id.in_(task_ids),
+            select(BackgroundTask)
+            .where(
                 BackgroundTask.status == "processing",
+                BackgroundTask.started_at >= now,
+                BackgroundTask.scheduled_at <= now,
             )
+            .order_by(BackgroundTask.id)
+            .limit(batch_size)
         ).all()
     )
+
     for t in claimed:
         logger.info(f"领取任务: id={t.id} type={t.task_type} retry={t.retry_count}")
 

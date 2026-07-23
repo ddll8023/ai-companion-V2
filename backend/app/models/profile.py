@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func
 
 from app.core.database import Base
 
@@ -41,10 +41,10 @@ class Profile(Base):
         comment="状态: candidate/confirmed/corrected/rejected/deleted",
     )
     is_auto_extracted = Column(
-        Integer,
+        Boolean,
         nullable=False,
-        default=0,
-        comment="是否自动提取: 0=手动, 1=LLM 自动提取",
+        default=False,
+        comment="是否自动提取: False=手动, True=LLM 自动提取",
     )
     version = Column(Integer, nullable=False, default=1, comment="版本号，纠正后递增")
     source_version = Column(String(64), nullable=True, comment="来源记忆版本号")

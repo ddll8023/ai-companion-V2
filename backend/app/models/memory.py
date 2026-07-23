@@ -23,7 +23,10 @@ class Memory(Base):
         String(32),
         nullable=False,
         default="fact",
-        comment="记忆类型: fact/preference/event/goal/habit",
+        comment=(
+            "记忆类型: fact=事实, preference=偏好, event=事件, "
+            "goal=目标/意图（语义类别，非 Goal 表）, habit=习惯"
+        ),
     )
     importance = Column(
         Integer, nullable=False, default=0, comment="重要性 0-10，数值越高越重要",

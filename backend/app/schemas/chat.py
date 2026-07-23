@@ -28,6 +28,7 @@ class SessionResponse(BaseModel):
     id: int
     title: str
     model_name: str | None = None
+    model_provider: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -47,6 +48,7 @@ class MessageResponse(BaseModel):
     status: str
     error_message: str | None = None
     model_name: str | None = None
+    model_provider: str | None = None
     token_count: int | None = None
     created_at: datetime | None = None
 

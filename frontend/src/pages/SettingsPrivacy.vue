@@ -306,6 +306,7 @@ import { onMounted, onUnmounted, reactive, ref } from 'vue'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
+import { formatTime } from '@/utils/format'
 import {
   listPrivacyRules,
   createPrivacyRule,
@@ -583,14 +584,6 @@ function rulePlaceholder(type: string): string {
     temp_pause: '{"pause_until": "2026-07-23T08:00:00"}',
   }
   return placeholders[type] || '输入规则值'
-}
-
-function formatTime(dateStr: string): string {
-  try {
-    return new Date(dateStr).toLocaleString()
-  } catch {
-    return dateStr
-  }
 }
 
 // ── 生命周期 ──────────────────────────────────────────────────────────────

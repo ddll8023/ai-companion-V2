@@ -183,6 +183,7 @@ import { onMounted, reactive, ref } from 'vue'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
+import { formatTime, formatDuration } from '@/utils/format'
 import {
   listActivities,
   getActivityStats,
@@ -320,23 +321,6 @@ async function confirmClearAll() {
 }
 
 // ── 工具函数 ──────────────────────────────────────────────────────────────
-
-function formatTime(dateStr: string): string {
-  try {
-    const d = new Date(dateStr)
-    return d.toLocaleString()
-  } catch {
-    return dateStr
-  }
-}
-
-function formatDuration(seconds: number): string {
-  if (seconds < 60) return `${seconds}秒`
-  if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
-  const h = Math.floor(seconds / 3600)
-  const m = Math.floor((seconds % 3600) / 60)
-  return `${h}小时${m}分钟`
-}
 
 function privacyActionClass(action: string): string {
   switch (action) {
