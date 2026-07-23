@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, func
+from sqlalchemy import Column, DateTime, Index, Integer, String, Text, func
 
 from app.core.database import Base
 
@@ -59,6 +59,10 @@ class Activity(Base):
             f"<Activity(id={self.id}, app='{self.app_name}', "
             f"started_at='{self.started_at}')>"
         )
+
+
+# 行为统计查询的覆盖索引
+Index("ix_activities_created_at_app_name", Activity.created_at, Activity.app_name)
 
 
 class PrivacyRule(Base):

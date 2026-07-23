@@ -10,8 +10,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
-from datetime import datetime
+from datetime import datetime, date
 
 from sqlalchemy import and_, desc, func, or_, select, text
 from sqlalchemy.orm import Session
@@ -29,6 +30,8 @@ from app.schemas.memory import (
     MemoryRevisionResponse,
     MemorySourceResponse,
 )
+from app.schemas.task import TaskCreate
+from app.services import task as services_task
 from app.services.audit import record_audit
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
@@ -177,6 +180,9 @@ def confirm_memory(db: Session, memory_id: int) -> MemoryResponse:
         summary=f"确认记忆: {memory.content[:100]}",
     )
 
+    # 记忆确认后自动触发画像提取（非阻塞，日级别去重）
+    _trigger_profile_extract(db)
+
     return MemoryResponse.model_validate(memory)
 
 
@@ -225,6 +231,9 @@ def correct_memory(db: Session, memory_id: int, data: MemoryCorrect) -> MemoryRe
         target_id=memory_id,
         summary=f"纠正记忆 (v{memory.version})",
     )
+
+    # 记忆纠正后自动触发画像提取（非阻塞，日级别去重）
+    _trigger_profile_extract(db)
 
     return MemoryResponse.model_validate(memory)
 
@@ -437,6 +446,33 @@ def save_memory_references(
         logger.info(f"保存记忆引用: message_id={message_id}, count={count}")
 
     return count
+
+
+# ── 画像提取自动触发 ────────────────────────────────────────────────────
+
+
+def _trigger_profile_extract(db: Session) -> None:
+    """记忆确认/纠正后自动触发画像提取。
+
+    使用日级别去重键，确保同一天最多触发一次。
+    任务创建失败不影响主流程。
+    """
+    try:
+        today = date.today().isoformat()  # "2026-07-23"
+        dedup_key = f"profile.extract:daily:{today}"
+
+        payload = {"memory_ids": None}
+        task_data = TaskCreate(
+            task_type="profile.extract",
+            payload=json.dumps(payload),
+            dedup_key=dedup_key,
+            priority=0,
+        )
+        services_task.create_task(db, task_data)
+        logger.debug(f"创建画像提取任务（日级别去重）: dedup_key={dedup_key}")
+    except Exception as e:
+        # 非阻塞：任务创建失败不影响记忆确认/纠正主流程
+        logger.warning(f"创建画像提取任务失败（可忽略）: {e!s}")
 
 
 # ── 内部方法 ────────────────────────────────────────────────────────────────

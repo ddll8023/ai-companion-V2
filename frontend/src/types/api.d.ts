@@ -444,3 +444,94 @@ export interface PlatformCapabilitiesResponse {
   platform: string
   capabilities: PlatformCapability[]
 }
+
+// ── 画像类型 ────────────────────────────────────────────────────────────────────
+
+/** 画像特征 */
+export interface Profile {
+  id: number
+  category: string
+  content: string
+  confidence: number
+  status: 'candidate' | 'confirmed' | 'corrected' | 'rejected' | 'deleted'
+  is_auto_extracted: number
+  version: number
+  source_version: string | null
+  error_message: string | null
+  created_at: string | null
+  updated_at: string | null
+}
+
+/** 画像来源 */
+export interface ProfileSource {
+  id: number
+  profile_id: number
+  source_type: string
+  memory_id: number | null
+  content_preview: string | null
+  evidence_text: string | null
+  created_at: string | null
+}
+
+/** 画像修订历史 */
+export interface ProfileRevision {
+  id: number
+  profile_id: number
+  previous_category: string | null
+  previous_content: string
+  previous_confidence: number | null
+  previous_status: string | null
+  changed_by: string
+  created_at: string | null
+}
+
+/** 画像详情 */
+export interface ProfileDetail {
+  profile: Profile
+  sources: ProfileSource[]
+  revisions: ProfileRevision[]
+}
+
+/** 创建画像请求 */
+export interface ProfileCreate {
+  category: string
+  content: string
+  confidence?: number
+  is_auto_extracted?: number
+  memory_ids?: number[]
+  evidence_texts?: string[]
+}
+
+/** 纠正画像请求 */
+export interface ProfileCorrect {
+  category: string
+  content: string
+  confidence: number
+}
+
+/** 画像列表查询参数 */
+export interface ProfileListQuery {
+  category?: string
+  status?: string
+  keyword?: string
+  is_auto_extracted?: number
+  page?: number
+  page_size?: number
+}
+
+/** 画像提取请求（当前无需参数，预留位置） */
+export interface ProfileExtractRequest {
+  // 当前为空，API Key 由后端进程内存缓存管理
+}
+
+/** 行为统计查询参数 */
+export interface BehaviorStatsQuery {
+  days?: number
+}
+
+/** 行为统计响应 */
+export interface BehaviorStatsResponse {
+  active_hours: { hour: number; count: number }[]
+  app_usage: { app_name: string; total_minutes: number; percentage: number }[]
+  chat_activity: { date: string; message_count: number }[]
+}

@@ -57,6 +57,7 @@ async def lifespan(app: FastAPI):
     if _db_ready:
         try:
             from app.tasks import memory_extract  # 注册记忆提取任务处理器
+            from app.tasks import profile_extract  # 注册画像提取任务处理器
             from app.tasks.scheduler import TaskScheduler
             _task_scheduler = TaskScheduler(poll_interval=2.0, recovery_interval=60.0)
             _task_scheduler.start()
@@ -122,7 +123,9 @@ from app.api import chat as api_chat
 from app.api import goals as api_goals
 from app.api import memories as api_memories
 from app.api import models as api_models
+from app.api import profiles as api_profiles
 from app.api import retrieval as api_retrieval
+from app.api import statistics as api_statistics
 from app.api import tasks as api_tasks
 
 app.include_router(api_activities.router)
@@ -131,7 +134,9 @@ app.include_router(api_chat.router)
 app.include_router(api_goals.router)
 app.include_router(api_memories.router)
 app.include_router(api_models.router)
+app.include_router(api_profiles.router)
 app.include_router(api_retrieval.router)
+app.include_router(api_statistics.router)
 app.include_router(api_tasks.router)
 
 

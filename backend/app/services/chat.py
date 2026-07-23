@@ -295,6 +295,8 @@ def run_chat_stream(
     api_key_cache_key = f"chat_{assistant_msg_id}"
     if api_key:
         api_key_cache.store(api_key_cache_key, api_key)
+        # 同时写入全局缓存（供画像提取等后台任务使用）
+        api_key_cache.store_global(api_key)
 
     try:
         for token in model_provider.chat_stream(

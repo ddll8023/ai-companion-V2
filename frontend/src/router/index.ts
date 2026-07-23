@@ -27,6 +27,12 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/pages/Goals.vue'),
   },
   {
+    path: '/understanding',
+    name: 'UserUnderstanding',
+    meta: { title: '用户理解', icon: 'user' },
+    component: () => import('@/pages/UserUnderstanding.vue'),
+  },
+  {
     path: '/activities',
     name: 'Activities',
     meta: { title: '活动', icon: 'clock' },

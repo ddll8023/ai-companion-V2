@@ -26,6 +26,9 @@ logger = setup_logger(__name__)
 # TTL: 10 分钟，足够后台任务完成
 _TTL_SECONDS = 600
 
+# 全局缓存的固定 key
+_GLOBAL_CACHE_KEY = "__global__"
+
 # 缓存结构: {key: (api_key, expire_time)}
 _cache: dict[str, tuple[str, float]] = {}
 _lock = threading.Lock()
@@ -73,3 +76,21 @@ def cleanup() -> int:
     if expired_keys:
         logger.debug(f"清理过期 API Key 缓存: count={len(expired_keys)}")
     return len(expired_keys)
+
+
+def store_global(api_key: str, ttl: int = _TTL_SECONDS) -> None:
+    """存储 API Key 到全局缓存。
+
+    与 chat 级缓存不同，全局缓存不绑定特定会话，
+    供画像提取等不需要会话上下文的后台任务使用。
+    """
+    store(_GLOBAL_CACHE_KEY, api_key, ttl)
+
+
+def get_global() -> str | None:
+    """获取全局缓存的 API Key（一次性取出，取出即删除）。
+
+    Returns:
+        API Key 字符串，不存在或已过期时返回 None
+    """
+    return pop(_GLOBAL_CACHE_KEY)
