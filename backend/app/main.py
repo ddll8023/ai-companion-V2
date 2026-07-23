@@ -47,6 +47,11 @@ async def lifespan(app: FastAPI):
         _db_ready = db_ready
         _db_migration_completed = db_ready
         db.close()
+
+        # 同步系统状态标记
+        from app.api.system import set_db_ready, set_db_migration_completed
+        set_db_ready(_db_ready)
+        set_db_migration_completed(_db_migration_completed)
     except Exception as exc:
         _db_ready = False
         _db_migration_completed = False
@@ -127,6 +132,7 @@ from app.api import models as api_models
 from app.api import profiles as api_profiles
 from app.api import retrieval as api_retrieval
 from app.api import statistics as api_statistics
+from app.api import system as api_system
 from app.api import tasks as api_tasks
 
 app.include_router(api_activities.router)
@@ -139,6 +145,7 @@ app.include_router(api_models.router)
 app.include_router(api_profiles.router)
 app.include_router(api_retrieval.router)
 app.include_router(api_statistics.router)
+app.include_router(api_system.router)
 app.include_router(api_tasks.router)
 
 

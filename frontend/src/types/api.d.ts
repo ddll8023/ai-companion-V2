@@ -659,3 +659,87 @@ export interface DataVolumeStats {
   backup_records: number
   retention_policies: number
 }
+
+// ── 系统状态类型 ──────────────────────────────────────────────────────────
+
+/** 系统状态响应 */
+export interface SystemStatusResponse {
+  service: {
+    name: string
+    version: string
+    status: string
+    uptime: string | null
+  }
+  database: {
+    ready: boolean
+    migration_completed: boolean
+    path: string
+    file_size_bytes: number
+    fts5_ready: boolean
+    fts5_index_count: number
+    table_counts: Record<string, number>
+  }
+  model_config: {
+    total_configs: number
+    active_count: number
+    error_count: number
+    active_config: {
+      id: number
+      name: string
+      provider: string
+      model_name: string
+      status: string
+      has_key: boolean
+      error_message: string | null
+    } | null
+    configured: boolean
+    available: boolean
+  }
+  data_directory: {
+    path: string
+    writable: boolean
+    file_count: number
+    total_size_bytes: number
+  }
+  background_tasks: {
+    pending: number
+    running: number
+    failed: number
+    retrying: number
+    total_backlog: number
+    healthy: boolean
+  }
+  backup: {
+    total_backups: number
+    latest_backup_at: string | null
+    latest_backup_status: string | null
+    latest_backup_size_bytes: number | null
+  }
+  activity_collection: {
+    privacy_rules_total: number
+    privacy_rules_active: number
+    activities_today: number
+    activities_total: number
+  }
+  checked_at: string
+}
+
+/** 审计日志统计 */
+export interface AuditStats {
+  total: number
+  success: number
+  fail: number
+  by_action: { action: string; count: number }[]
+}
+
+/** 审计日志记录 */
+export interface AuditLogResponse {
+  id: number
+  action: string
+  target_type: string | null
+  target_id: number | null
+  summary: string | null
+  detail: string | null
+  result: number
+  created_at: string | null
+}

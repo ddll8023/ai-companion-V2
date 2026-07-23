@@ -56,6 +56,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '数据管理', icon: 'database' },
     component: () => import('@/pages/DataManagement.vue'),
   },
+  {
+    path: '/settings/status',
+    name: 'SystemStatus',
+    meta: { title: '系统状态', icon: 'heart-pulse' },
+    component: () => import('@/pages/SystemStatus.vue'),
+  },
 ]
 
 const router = createRouter({

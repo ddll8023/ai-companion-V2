@@ -76,6 +76,7 @@ const navItems: NavItem[] = [
   { path: '/activities', label: '活动', icon: 'clock' },
   { path: '/settings', label: '设置', icon: 'gear' },
   { path: '/settings/data', label: '数据管理', icon: 'database' },
+  { path: '/settings/status', label: '系统状态', icon: 'heart-pulse' },
 ]
 
 function isActive(path: string): boolean {
