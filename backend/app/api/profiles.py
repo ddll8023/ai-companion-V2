@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from app.core import api_key_cache
 from app.core.database import get_db
 from app.schemas.common import ApiResponse, ErrorCode, PaginatedResponse
 from app.schemas.profile import (
@@ -18,7 +19,6 @@ from app.schemas.profile import (
 )
 from app.schemas.response import error, success
 from app.services import profile as services_profile
-from app.tasks import profile_extract as tasks_profile_extract
 from app.utils.exception import ServiceException
 
 router = APIRouter(prefix="/api/v1/profiles", tags=["画像"])
@@ -37,8 +37,13 @@ def extract_profiles(
     无需前端传递。
     """
     try:
-        payload = {"memory_ids": None}
-        result = tasks_profile_extract.handle_profile_extract(payload)
+        api_key = api_key_cache.peek_global()
+        if not api_key:
+            return error(
+                code=ErrorCode.PARAM_ERROR,
+                message="API Key 不可用（请先进行一次对话）",
+            )
+        result = services_profile.sync_extract_profiles(db, api_key=api_key)
         return success(data={"result": result})
     except ServiceException as e:
         return error(code=e.code, message=e.message)

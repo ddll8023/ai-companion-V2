@@ -52,11 +52,12 @@ def get_database_status(db: Session) -> dict[str, Any]:
         from app.models.task import BackgroundTask
 
         return {
+            "status": "ok",
             "ready": True,
-            "path": db_file,
             "file_size_bytes": file_size_bytes,
             "fts5_ready": fts5_ready,
             "fts5_index_count": fts5_count,
+            # 注意：不返回 path 字段，Renderer 不得获得数据库路径
             "table_counts": {
                 "sessions": db.query(ChatSession).count(),
                 "messages": db.query(Message).count(),
@@ -74,8 +75,9 @@ def get_database_status(db: Session) -> dict[str, Any]:
     except Exception as exc:
         logger.error(f"数据库状态检查失败: {exc}")
         return {
+            "status": "error",
+            "error_message": str(exc)[:200],
             "ready": False,
-            "path": settings.db_file_path,
             "file_size_bytes": 0,
             "fts5_ready": False,
             "fts5_index_count": 0,
@@ -113,6 +115,7 @@ def get_model_config_status(db: Session) -> dict[str, Any]:
                 }
 
         return {
+            "status": "ok",
             "total_configs": total,
             "active_count": active,
             "error_count": has_error,
@@ -123,6 +126,8 @@ def get_model_config_status(db: Session) -> dict[str, Any]:
     except Exception as exc:
         logger.error(f"模型配置状态检查失败: {exc}")
         return {
+            "status": "error",
+            "error_message": str(exc)[:200],
             "total_configs": 0,
             "active_count": 0,
             "error_count": 0,
@@ -151,6 +156,7 @@ def get_task_backlog(db: Session) -> dict[str, Any]:
         ).count()
 
         return {
+            "status": "ok",
             "pending": pending,
             "running": running,
             "failed": failed,
@@ -161,6 +167,8 @@ def get_task_backlog(db: Session) -> dict[str, Any]:
     except Exception as exc:
         logger.error(f"后台任务积压统计失败: {exc}")
         return {
+            "status": "error",
+            "error_message": str(exc)[:200],
             "pending": 0,
             "running": 0,
             "failed": 0,
@@ -181,6 +189,7 @@ def get_backup_status(db: Session) -> dict[str, Any]:
         ).first()
 
         return {
+            "status": "ok",
             "total_backups": total,
             "latest_backup_at": (
                 latest.created_at.isoformat() if latest else None
@@ -193,6 +202,8 @@ def get_backup_status(db: Session) -> dict[str, Any]:
     except Exception as exc:
         logger.error(f"备份状态检查失败: {exc}")
         return {
+            "status": "error",
+            "error_message": str(exc)[:200],
             "total_backups": 0,
             "latest_backup_at": None,
             "latest_backup_status": None,
@@ -217,6 +228,7 @@ def get_activity_collection_status(db: Session) -> dict[str, Any]:
         total_activities = db.query(Activity).count()
 
         return {
+            "status": "ok",
             "privacy_rules_total": total_rules,
             "privacy_rules_active": active_rules,
             "activities_today": today_count,
@@ -225,6 +237,8 @@ def get_activity_collection_status(db: Session) -> dict[str, Any]:
     except Exception as exc:
         logger.error(f"活动采集状态检查失败: {exc}")
         return {
+            "status": "error",
+            "error_message": str(exc)[:200],
             "privacy_rules_total": 0,
             "privacy_rules_active": 0,
             "activities_today": 0,

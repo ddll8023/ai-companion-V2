@@ -407,37 +407,75 @@ function saveSecureStore(store: Record<string, string>): void {
 
 /** API 访问控制规则。
  *
- * blockedPaths: 按路径段前缀阻断（自动处理 URL 编码，只匹配独立路径段）。
- * 使用 /api/v1/data/clear-all 阻断 clear-all，不误阻 clear-all?type=xxx 等参数化请求。
+ * 使用前缀白名单模式——只允许已知的业务路径通过 IPC 代理访问 Renderer。
+ * 取代旧的阻断列表模式：阻断列表无法防御未知路径的安全风险。
+ *
+ * 按 HTTP 方法分组：
+ * - GET（只读）：允许所有 /api/v1/ 前缀路径（只读操作风险低）
+ * - POST/PUT（写入）：只允许前端业务明确需要的路径前缀
+ * - DELETE（删除）：只允许明确的资源 ID 级删除
+ *
+ * 注意：
+ * - 管理员级操作（backup/restore/clear）虽在前端有 UI 且后端已验证 confirm_key，
+ *   但仍在此白名单中放行，因为 IPC 代理不应替代后端的业务校验 ——
+ *   后端 /v1/data/restore 和 /v1/data/clear 自有 confirm_key 验证。
+ * - 新增路由时需要在此白名单中添加对应前缀，否则 IPC 模式会返回 403。
+ * - 前缀匹配使用路径段精确比较（非子串），自动处理 URL 编码。
  */
 const API_ACCESS_RULES = {
-  /** 只读 GET */
+  /** 只读 GET —— 允许所有 /api/v1/ 前缀路径 */
   read: {
-    // 阻断管理性接口
-    blockedPathPrefixes: ['/api/v1/data/clear-all', '/api/v1/data/backup', '/api/v1/data/restore'],
-  },
-  /** 写入 POST/PUT */
-  write: {
-    // 阻断全局数据操作和备份恢复等高危接口
-    // 不阻断单条数据修改（如 POST /api/v1/activities/privacy-rules 是合法规则创建）
-    blockedPathPrefixes: [
-      '/api/v1/data/clear-all',
-      '/api/v1/data/clear',
-      '/api/v1/data/backup',
-      '/api/v1/data/restore',
+    allowedPathPrefixes: [
+      '/health',
+      '/api/health',
+      '/api/v1/',
     ],
   },
-  /** 删除 DELETE */
+  /** 写入 POST/PUT —— 只允许前端业务路径 */
+  write: {
+    allowedPathPrefixes: [
+      '/api/v1/activities/',
+      '/api/v1/audit/list',
+      '/api/v1/chat/sessions',
+      '/api/v1/data/backup',
+      '/api/v1/data/backups/',
+      '/api/v1/data/clear',
+      '/api/v1/data/clear-all',
+      '/api/v1/data/export',
+      '/api/v1/data/exports/',
+      '/api/v1/data/restore',
+      '/api/v1/data/retention',
+      '/api/v1/data/retention/',
+      '/api/v1/goals/',
+      '/api/v1/memories/',
+      '/api/v1/models/configs',
+      '/api/v1/profiles/',
+      '/api/v1/statistics/',
+      '/api/v1/tasks/',
+    ],
+  },
+  /** 删除 —— 只允许明确的资源级删除 */
   delete: {
-    // 只阻断全局清除，允许单条导出/备份记录的删除
-    blockedPathPrefixes: ['/api/v1/data/clear-all', '/api/v1/data/clear'],
+    allowedPathPrefixes: [
+      '/api/v1/activities/',
+      '/api/v1/chat/sessions/',
+      '/api/v1/data/exports/',
+      '/api/v1/data/backups/',
+      '/api/v1/data/retention/',
+      '/api/v1/memories/',
+      '/api/v1/models/configs/',
+      '/api/v1/profiles/',
+    ],
   },
 };
 
 /** 检查 URL 路径是否被允许通过 IPC 代理。
-
- * 使用路径段前缀精确比较（而非子串匹配），避免误阻合法请求。
- * 同时做 URL 解码防止编码绕过。
+ *
+ * 使用前缀白名单模式——只放行明确允许的路径前缀。
+ * 前缀以 / 结尾的视为目录前缀（匹配其下的任何子路径），
+ * 前缀不以 / 结尾的只精确匹配（不匹配子路径以防误匹配如 /export → /exports）。
+ * 自动做 URL 解码和规范化防止编码绕过。
+ * 未知路径默认拒绝（403）。
  */
 function isApiPathAllowed(urlPath: string, accessLevel: 'read' | 'write' | 'delete'): boolean {
   const rules = API_ACCESS_RULES[accessLevel];
@@ -445,11 +483,15 @@ function isApiPathAllowed(urlPath: string, accessLevel: 'read' | 'write' | 'dele
   const decoded = decodeURIComponent(urlPath);
   // 规范化：去除末尾斜杠
   const normalized = decoded.replace(/\/+$/, '');
-  // 路径段前缀检查：检查是否以任何阻断路径段开头
-  const isBlocked = rules.blockedPathPrefixes.some((prefix) => {
-    return normalized === prefix || normalized.startsWith(prefix + '/') || normalized.startsWith(prefix + '?');
+  // 前缀白名单检查
+  const allowed = rules.allowedPathPrefixes.some((prefix) => {
+    // 精确匹配
+    if (normalized === prefix) return true;
+    // 路径前缀匹配：只有 prefix 以 / 结尾时匹配子路径（避免 /export 误匹配 /exports/list）
+    if (prefix.endsWith('/') && normalized.startsWith(prefix)) return true;
+    return false;
   });
-  return !isBlocked;
+  return allowed;
 }
 
 /** 静态能力定义（异步权限检测失败时的降级 fallback）。 */

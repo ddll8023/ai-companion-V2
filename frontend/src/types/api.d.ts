@@ -27,11 +27,6 @@ export interface HealthData {
   database: {
     ready: boolean
     migration_completed: boolean
-    path: string
-  }
-  data_directory: {
-    path: string
-    writable: boolean
   }
 }
 
@@ -695,15 +690,18 @@ export interface SystemStatusResponse {
     uptime: string | null
   }
   database: {
+    status: 'ok' | 'error'
+    error_message?: string | null
     ready: boolean
     migration_completed: boolean
-    path: string
     file_size_bytes: number
     fts5_ready: boolean
     fts5_index_count: number
     table_counts: Record<string, number>
   }
   model_config: {
+    status: 'ok' | 'error'
+    error_message?: string | null
     total_configs: number
     active_count: number
     error_count: number
@@ -727,6 +725,8 @@ export interface SystemStatusResponse {
     scan_limited: boolean
   }
   background_tasks: {
+    status: 'ok' | 'error'
+    error_message?: string | null
     pending: number
     running: number
     failed: number
@@ -735,12 +735,16 @@ export interface SystemStatusResponse {
     healthy: boolean
   }
   backup: {
+    status: 'ok' | 'error'
+    error_message?: string | null
     total_backups: number
     latest_backup_at: string | null
     latest_backup_status: string | null
     latest_backup_size_bytes: number | null
   }
   activity_collection: {
+    status: 'ok' | 'error'
+    error_message?: string | null
     privacy_rules_total: number
     privacy_rules_active: number
     activities_today: number
@@ -779,7 +783,5 @@ export interface ElectronAppStatus {
   appVersion: string
   pid: number
   platform: string
-  appPath: string
-  userDataPath: string
   uptime: number
 }

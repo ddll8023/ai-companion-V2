@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 from datetime import datetime, timedelta
 
@@ -377,6 +378,202 @@ def check_duplicate_profile(
 # ========== 辅助函数 ==========
 
 """辅助函数"""
+
+
+def sync_extract_profiles(
+    db: Session,
+    api_key: str,
+    memory_ids: list[int] | None = None,
+) -> dict:
+    """从已确认记忆中同步提取画像特征并保存候选画像。
+
+    这是 sync_extract_profiles 的纯业务方法，不涉及任务调度。
+    API 路由和后台任务处理器都通过此方法调用同一份提取逻辑。
+
+    Args:
+        db: 数据库会话
+        api_key: API Key
+        memory_ids: 指定记忆 ID 列表；None 表示提取全部已确认记忆
+
+    Returns:
+        dict: 包含 extracted（提取数）和 skipped（重复跳过数）或 error 字段
+    """
+    try:
+        from app.models.memory import Memory
+        from app.schemas.profile import PROFILE_CATEGORIES, ProfileCreate
+        from app.services import model_provider
+
+        # 1. 获取激活的模型配置
+        active_config = model_provider.get_active_config(db)
+        if active_config is None:
+            return {"extracted": 0, "error": "无激活的模型配置"}
+
+        # 2. 获取已确认记忆
+        stmt = select(Memory).where(
+            Memory.status.in_(["confirmed", "corrected"]),
+        )
+        if memory_ids:
+            stmt = stmt.where(Memory.id.in_(memory_ids))
+        memories = list(
+            db.scalars(
+                stmt.order_by(desc(Memory.importance), desc(Memory.id))
+                .limit(50)
+            ).all()
+        )
+        if not memories:
+            return {"extracted": 0, "reason": "无可用的已确认记忆"}
+
+        # 3. 格式化记忆文本
+        parts = []
+        for mem in memories:
+            parts.append(
+                f"[类型: {mem.type} | 重要性: {mem.importance}]\n{mem.content}",
+            )
+        memories_text = "\n\n---\n\n".join(parts)
+        memory_ids_sorted = sorted([m.id for m in memories])
+        source_version = (
+            f"memories_{'_'.join(str(i) for i in memory_ids_sorted[:20])}"
+        )
+
+        # 4. 调用模型
+        _PROFILE_EXTRACT_SYSTEM_PROMPT = (
+            "你是用户画像分析助手。请阅读以下「用户已确认的记忆」列表，"
+            "从中提取用户的人物画像特征。\n\n"
+            "提取要求：\n"
+            "1. 只从给定的记忆内容中推断，禁止添加记忆未包含的信息\n"
+            "2. 提取稳定的、对长期理解用户有帮助的特征\n"
+            "3. 每条特征必须附带「evidence」（直接对应记忆原文）作为证据\n"
+            "4. 避免过度泛化：单条临时情绪不构成习惯或偏好\n"
+            "5. 用简洁明确的中文描述画像内容\n"
+            "6. 如果没有可提取的画像特征，返回空列表\n\n"
+            "可选类别：\n"
+            "- communication_preference（沟通偏好：语气、格式、风格等）\n"
+            "- work_habit（工作习惯：工作方式、工具偏好、时间安排等）\n"
+            "- learning_preference（学习偏好：学习方式、知识领域等）\n"
+            "- interest（兴趣方向：关注的话题、娱乐、爱好等）\n"
+            "- decision_preference（决策偏好：选择倾向、权衡方式等）\n"
+            "- time_habit（时间习惯：活跃时段、作息等）\n"
+            "- long_term_goal（长期目标：事业、学习、生活目标等）\n"
+            "- work_pattern（使用模式：常用应用、工作流程等）\n"
+            "- other（其他无法归类的稳定特征）\n\n"
+            "请以 JSON 格式返回，格式为：\n"
+            '{"profiles": [{"category": "...", "content": "...", '
+            '"confidence": 80, "evidence": "记忆原文..."}]}\n\n'
+            "置信度规则：\n"
+            "- 有 2 条以上独立记忆支持同一结论 → 60～80\n"
+            "- 只有 1 条记忆支持 → 最高 50\n"
+            "- 直觉推断但无直接记忆支持 → 最高 30\n"
+            "- 超过 80 的置信度必须有至少 3 条独立记忆交叉支持\n\n"
+            "只返回 JSON，不要包含其他说明文字。"
+        )
+
+        result_text = model_provider.chat_sync(
+            provider=active_config.provider,
+            model_name=active_config.model_name,
+            api_key=api_key,
+            api_base=active_config.api_base,
+            system_prompt=_PROFILE_EXTRACT_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": memories_text}],
+        )
+
+        if not result_text:
+            return {"extracted": 0, "reason": "模型返回为空"}
+
+        # 5. 解析 JSON
+        parsed = _parse_extraction_result(result_text)
+        if parsed is None:
+            return {"extracted": 0, "error": "模型返回格式异常"}
+
+        profiles_data = parsed.get("profiles", [])
+        if not profiles_data:
+            return {"extracted": 0, "reason": "未提取到有效画像"}
+
+        # 6. 保存候选画像（含去重）
+        extracted_count = 0
+        skipped_count = 0
+
+        for prof in profiles_data:
+            category = prof.get("category", "other")
+            content = (prof.get("content", "") or "").strip()
+            confidence = prof.get("confidence", 50)
+            evidence = (prof.get("evidence", "") or "").strip()
+
+            # 校验类别
+            if category not in PROFILE_CATEGORIES:
+                category = "other"
+
+            # 校验内容
+            if not content or len(content) < 5:
+                continue
+
+            # 限制置信度
+            confidence = min(max(confidence, 0), 60)
+            if evidence and len(evidence) > 10:
+                confidence = min(max(confidence, 0), 80)
+
+            # 去重
+            if check_duplicate_profile(db, category, content):
+                skipped_count += 1
+                continue
+
+            create_data = ProfileCreate(
+                category=category,
+                content=content,
+                confidence=confidence,
+                is_auto_extracted=1,
+                source_version=source_version,
+                memory_ids=[],
+                evidence_texts=[evidence] if evidence else [],
+            )
+
+            try:
+                create_candidate_profile(db, create_data)
+                extracted_count += 1
+            except Exception as exc:
+                logger.warning(f"保存候选画像失败: {exc}")
+                continue
+
+        logger.info(
+            f"画像提取完成: 提取 {extracted_count} 条, 跳过 {skipped_count} 条重复",
+        )
+        return {"extracted": extracted_count, "skipped": skipped_count}
+
+    except Exception as exc:
+        logger.error(f"画像提取模型调用异常: {exc}", exc_info=True)
+        return {"extracted": 0, "error": str(exc)[:200]}
+
+
+def _parse_extraction_result(text: str) -> dict | None:
+    """解析模型返回的 JSON 结果。"""
+    text = text.strip()
+
+    # 尝试直接解析
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 尝试从 ```json ... ``` 代码块提取
+    if "```" in text:
+        import re
+
+        matches = re.findall(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
+        for match in matches:
+            try:
+                return json.loads(match.strip())
+            except json.JSONDecodeError:
+                continue
+
+    # 尝试找到第一个 { 和最后一个 }
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(text[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    return None
 
 
 def _get_profile_or_error(db: Session, profile_id: int) -> Profile:

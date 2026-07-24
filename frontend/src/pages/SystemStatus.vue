@@ -287,7 +287,6 @@ onMounted(fetchData)
                   {{ status.database.ready ? '就绪' : '不可用' }}
                 </span>
               </div>
-              <p class="mt-2 text-xs text-text-tertiary break-all">{{ status.database.path }}</p>
             </div>
 
             <div class="p-4 bg-surface rounded-lg border border-border">
@@ -435,7 +434,16 @@ onMounted(fetchData)
             <font-awesome-icon :icon="['fas', 'tasks']" class="mr-2" />
             后台任务
           </h3>
-          <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div v-if="status.background_tasks.status === 'error'" class="p-4 bg-surface rounded-lg border border-border">
+            <p class="text-sm text-error">
+              <font-awesome-icon :icon="['fas', 'circle-exclamation']" class="mr-2" />
+              后台任务状态查询失败
+            </p>
+            <p v-if="status.background_tasks.error_message" class="mt-1 text-xs text-text-tertiary">
+              {{ status.background_tasks.error_message }}
+            </p>
+          </div>
+          <div v-else class="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div class="p-4 bg-surface rounded-lg border border-border">
               <div class="flex items-center gap-2 text-sm">
                 <font-awesome-icon :icon="['fas', statusIcon(status.background_tasks.healthy)]" :class="statusColor(status.background_tasks.healthy)" />
@@ -480,7 +488,16 @@ onMounted(fetchData)
             <font-awesome-icon :icon="['fas', 'clock']" class="mr-2" />
             活动采集
           </h3>
-          <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
+          <div v-if="status.activity_collection.status === 'error'" class="p-4 bg-surface rounded-lg border border-border">
+            <p class="text-sm text-warning">
+              <font-awesome-icon :icon="['fas', 'circle-exclamation']" class="mr-2" />
+              活动采集状态查询异常
+            </p>
+            <p v-if="status.activity_collection.error_message" class="mt-1 text-xs text-text-tertiary">
+              {{ status.activity_collection.error_message }}
+            </p>
+          </div>
+          <div v-else class="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <div class="p-4 bg-surface rounded-lg border border-border">
               <div class="flex items-center gap-2 text-sm text-text-secondary">
                 <font-awesome-icon :icon="['fas', 'shield']" />
