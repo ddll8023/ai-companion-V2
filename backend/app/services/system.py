@@ -44,7 +44,7 @@ def get_database_status(db: Session) -> dict[str, Any]:
         # 获取各表记录数
         from app.models.activity import Activity
         from app.models.audit import AuditLog
-        from app.models.chat import Message, Session as ChatSession
+        from app.models.chat import ChatSession, Message
         from app.models.data_governance import BackupRecord, DataExport
         from app.models.goal import Goal, Task
         from app.models.memory import Memory
