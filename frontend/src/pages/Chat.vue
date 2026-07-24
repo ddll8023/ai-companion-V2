@@ -144,6 +144,35 @@
                 >
                   已中止
                 </p>
+
+                <!-- 记忆引用（仅助手已完成消息） -->
+                <div
+                  v-if="msg.role === 'assistant' && msg.status === 'completed' && msg.memory_references && msg.memory_references.length > 0"
+                  class="mt-3 pt-2 border-t border-border/50"
+                >
+                  <p class="text-xs text-text-tertiary mb-1.5 flex items-center gap-1">
+                    <font-awesome-icon :icon="['fas', 'book-open']" class="text-xs" />
+                    来自记忆
+                  </p>
+                  <div class="space-y-1">
+                    <div
+                      v-for="ref in msg.memory_references"
+                      :key="ref.id"
+                      class="flex items-start gap-1.5"
+                    >
+                      <font-awesome-icon
+                        :icon="['fas', 'quote-left']"
+                        class="mt-0.5 text-text-tertiary/50 text-xs flex-shrink-0"
+                      />
+                      <span class="text-xs text-text-tertiary leading-relaxed">
+                        {{ ref.memory_content_preview || '(内容不可用)' }}
+                        <span v-if="ref.relevance_score" class="ml-1 opacity-60">
+                          相关度: {{ ref.relevance_score }}
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 

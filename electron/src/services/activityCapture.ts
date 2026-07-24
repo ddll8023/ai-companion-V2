@@ -426,7 +426,7 @@ export class ActivityCaptureManager {
     windowTitle: string | null,
   ): { allow: boolean; reason: string | null } {
     if (!this._privacyRules.length) {
-      return { allow: true, reason: null };
+      return { allow: false, reason: '无隐私规则，默认阻断' };
     }
 
     const appNameLower = appName.toLowerCase();

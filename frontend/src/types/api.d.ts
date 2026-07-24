@@ -93,6 +93,17 @@ export interface SessionUpdate {
   title: string
 }
 
+/** 记忆引用（对话中引用到的记忆） */
+export interface MemoryReference {
+  id: number
+  message_id: number
+  memory_id: number | null
+  memory_content_preview: string | null
+  relevance_score: number | null
+  rank: number | null
+  created_at: string | null
+}
+
 /** 消息 */
 export interface Message {
   id: number
@@ -103,6 +114,7 @@ export interface Message {
   error_message: string | null
   model_name: string | null
   token_count: number | null
+  memory_references?: MemoryReference[]
   created_at: string | null
 }
 

@@ -22,7 +22,9 @@ from sqlalchemy.orm import Session
 from app.core import api_key_cache
 from app.core.database import commit_or_rollback, get_background_db_session
 from app.models.chat import ChatSession, Message
+from app.models.memory import MemoryReference
 from app.schemas.chat import MessageResponse, SessionCreate, SessionResponse, SessionUpdate
+from app.schemas.reference import MemoryReferenceResponse
 from app.schemas.common import ErrorCode
 from app.schemas.task import TaskCreate
 from app.services import model_provider
@@ -102,7 +104,20 @@ def get_messages(db: Session, session_id: int) -> list[MessageResponse]:
         .where(Message.session_id == session_id)
         .order_by(Message.id)
     ).all()
-    return [MessageResponse.model_validate(item) for item in items]
+
+    # 为每条助手消息加载记忆引用
+    result = []
+    for item in items:
+        resp = MessageResponse.model_validate(item)
+        if item.role == "assistant":
+            refs = db.scalars(
+                select(MemoryReference)
+                .where(MemoryReference.message_id == item.id)
+                .order_by(MemoryReference.rank)
+            ).all()
+            resp.memory_references = [MemoryReferenceResponse.model_validate(r) for r in refs]
+        result.append(resp)
+    return result
 
 
 def _save_user_message(db: Session, session_id: int, content: str) -> Message:

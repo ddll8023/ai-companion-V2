@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.reference import MemoryReferenceResponse
+
 
 # ── 会话 Schema ────────────────────────────────────────────────────────────
 
@@ -50,6 +52,9 @@ class MessageResponse(BaseModel):
     model_name: str | None = None
     model_provider: str | None = None
     token_count: int | None = None
+    memory_references: list[MemoryReferenceResponse] = Field(
+        default_factory=list, description="该消息引用的记忆列表",
+    )
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

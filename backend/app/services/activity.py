@@ -222,8 +222,8 @@ def _evaluate_privacy(
     ).all()
 
     if not rules:
-        # 没有配置规则时默认允许
-        return PrivacyEvaluateResult(allowed=True, action="allowed")
+        # 没有配置规则时默认阻断（fail closed — 无法确认安全时停止采集）
+        return PrivacyEvaluateResult(allowed=False, action="blocked", reason="无隐私规则，默认阻断")
 
     # 1. 处理 temp_pause 规则过期自动禁用
     _deactivate_expired_temp_pauses(db, rules)
