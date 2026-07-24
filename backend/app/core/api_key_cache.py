@@ -59,6 +59,25 @@ def pop(key: str) -> str | None:
         return api_key
 
 
+def peek(key: str) -> str | None:
+    """查看 API Key（只读不删，可重复读取）。
+
+    后台任务应使用此方法而非 pop()，以确保重试时仍可获取密钥。
+    密钥会在 TTL 到期后自动清理。
+
+    Returns:
+        API Key 字符串，不存在或已过期时返回 None
+    """
+    with _lock:
+        entry = _cache.get(key)
+        if entry is None:
+            return None
+        api_key, expire_at = entry
+        if time.time() > expire_at:
+            return None
+        return api_key
+
+
 def cleanup() -> int:
     """清理过期缓存项。
 

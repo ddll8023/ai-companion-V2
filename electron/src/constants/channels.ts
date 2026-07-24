@@ -27,5 +27,15 @@ export const IPC_CHANNELS = {
   ACTIVITY_CAPTURE_STOP: 'activity-capture:stop',
   /** 获取采集状态 */
   ACTIVITY_CAPTURE_STATUS: 'activity-capture:status',
+  // ── 安全 IPC（密钥由主进程注入，不经过 Renderer） ──
+  /** 流式对话：Renderer 发送消息（不含 API Key），主进程注入 Key 后转发 */
+  CHAT_STREAM: 'chat:stream',
+
+  /** 模型连接测试：Renderer 发送 configId（不含 API Key），主进程注入 Key 后转发 */
+  MODEL_TEST: 'model:test',
+
+  /** 清除模型密钥：Renderer 通过 configId 发起，主进程执行删除 */
+  MODEL_CLEAR_KEY: 'model:clear-key',
+
   // 注意：不暴露 GET_DATA_DIR，Renderer 不得获得数据库路径
 } as const;

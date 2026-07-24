@@ -33,8 +33,8 @@ class Settings(BaseSettings):
     # 应用版本（所有地方统一引用此处，避免硬编码）
     APP_VERSION: str = "0.1.0"
 
-    # 认证令牌（Electron 环境由主进程传入，浏览器开发模式为空字符串则跳过认证）
-    AUTH_TOKEN: str = ""
+    # 认证令牌（Electron 环境由主进程传入，必须设置）
+    AUTH_TOKEN: str
 
     # CORS 配置（JSON 数组字符串）
     CORS_ORIGINS: str = '["http://127.0.0.1:9753","http://localhost:9753"]'
@@ -44,7 +44,8 @@ class Settings(BaseSettings):
         try:
             return json.loads(self.CORS_ORIGINS)
         except (json.JSONDecodeError, TypeError):
-            return ["*"]
+            # 解析失败时使用安全默认值
+            return ["http://127.0.0.1:9753"]
 
     @property
     def resolved_data_dir(self) -> str:

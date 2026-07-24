@@ -11,6 +11,12 @@ export interface ActivityCaptureStatus {
   accessibilityAvailable: boolean;
 }
 
+export interface ChatStreamRequest {
+  sessionId: number;
+  content: string;
+  configId: number;
+}
+
 export interface ElectronAPI {
   // ── API 代理 ──
   /** 通过 IPC 发送 GET 请求到本地服务 */
@@ -22,21 +28,37 @@ export interface ElectronAPI {
   /** 通过 IPC 发送 DELETE 请求到本地服务 */
   apiDelete: <T>(url: string) => Promise<{ code: number; message: string; data?: T }>
 
-  // ── 安全存储 ──
-  /** 安全存储密钥 */
+  // ── 安全存储（只写 + 存在检查，不可读取密钥值） ──
+  /** 安全存储密钥（只写） */
   keystoreSet: (key: string, value: string) => Promise<{ success: boolean; error?: string }>
-  /** 获取已安全存储的密钥 */
-  keystoreGet: (key: string) => Promise<{ success: boolean; value: string | null }>
-  /** 删除已安全存储的密钥 */
-  keystoreDelete: (key: string) => Promise<{ success: boolean }>
   /** 检查密钥是否存在 */
   keystoreHas: (key: string) => Promise<{ success: boolean; has: boolean }>
+
+  // ── 安全对话（密钥由主进程注入） ──
+  /** 流式对话（密钥由主进程从 keystore 注入，Renderer 不接触密钥） */
+  streamChat: (data: ChatStreamRequest) => Promise<{ code: number; message: string; data?: any }>
+
+  // ── 安全模型操作（密钥由主进程注入） ──
+  /** 测试模型连接（密钥由主进程从 keystore 注入） */
+  testModelConnection: (configId: number) => Promise<{ success: boolean; message: string }>
+  /** 清除模型密钥 */
+  clearModelKey: (configId: number) => Promise<{ success: boolean }>
 
   // ── 系统信息 ──
   /** 获取当前平台 */
   getPlatform: () => Promise<string>
   /** 获取应用版本 */
   getAppVersion: () => Promise<string>
+  /** 获取应用运行时状态 */
+  getAppStatus: () => Promise<{
+    electronVersion: string;
+    nodeVersion: string;
+    chromeVersion: string;
+    appVersion: string;
+    pid: number;
+    platform: string;
+    uptime: number;
+  }>
   /** 获取平台各能力状态（异步检测 macOS 权限） */
   getPlatformCapabilities: () => Promise<PlatformCapabilitiesResponse>
 

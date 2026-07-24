@@ -83,12 +83,17 @@ def claim_pending_tasks(db: Session, batch_size: int = _CLAIM_BATCH_SIZE) -> lis
     now = datetime.now()
 
     # 原子 UPDATE：子查询选取 → UPDATE 状态
+    # retry_count 仅在 status='retrying'（重试领取）时递增
+    # 首次领取（status='pending'）不递增，保证有效重试次数 = max_retries
     db.execute(
         text("""
             UPDATE background_tasks
             SET status = 'processing',
                 started_at = :now,
-                retry_count = retry_count + 1
+                retry_count = CASE
+                    WHEN status = 'retrying' THEN retry_count + 1
+                    ELSE retry_count
+                END
             WHERE id IN (
                 SELECT id FROM background_tasks
                 WHERE status IN ('pending', 'retrying')

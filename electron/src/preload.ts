@@ -6,6 +6,11 @@
  * - 不暴露通用 IPC 发送能力（不暴露 ipcRenderer.send）
  * - Renderer 无法获得端口、令牌、数据库路径和密钥明文
  *
+ * 安全设计（重构后）：
+ * - Renderer 只能写入密钥（keystoreSet），不可读取（keystoreGet 已删除）
+ * - 敏感操作（对话、测试连接）通过专用 IPC 通道由主进程注入密钥
+ * - Renderer 可查询密钥是否存在（keystoreHas），不可获取密钥值
+ *
  * 新增（阶段 11）：
  * - 活动采集控制（start/stop/status）
  * - 平台能力实时检测（异步）
@@ -39,22 +44,43 @@ const api = {
   apiDelete: <T>(url: string): Promise<{ code: number; message: string; data?: T }> =>
     ipcRenderer.invoke(IPC_CHANNELS.API_DELETE, url),
 
-  // ── 安全存储 ────────────────────────────────────────────
-  /** 安全存储密钥（加密后保存到磁盘） */
+  // ── 安全存储（Render 只可写入和查询存在，不可读取密钥值） ──
+  /** 安全存储密钥（加密后保存到磁盘）—— 只写，不可读回 */
   keystoreSet: (key: string, value: string): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.KEYSTORE_SET, key, value),
-
-  /** 获取已安全存储的密钥 */
-  keystoreGet: (key: string): Promise<{ success: boolean; value: string | null }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.KEYSTORE_GET, key),
-
-  /** 删除已安全存储的密钥 */
-  keystoreDelete: (key: string): Promise<{ success: boolean }> =>
-    ipcRenderer.invoke(IPC_CHANNELS.KEYSTORE_DELETE, key),
 
   /** 检查密钥是否存在 */
   keystoreHas: (key: string): Promise<{ success: boolean; has: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.KEYSTORE_HAS, key),
+
+  // keystoreGet / keystoreDelete 已移除：Renderer 不得获得密钥值
+  // 密钥清除通过专用 IPC 通道 model:clear-key 实现
+
+  // ── 安全对话 ──────────────────────────────────────────
+  /**
+   * 流式对话（密钥由主进程注入，Renderer 不持有密钥）。
+   * 返回 readablestream 兼容的 AsyncIterable<ChatStreamEvent>。
+   */
+  streamChat: (data: {
+    sessionId: number;
+    content: string;
+    configId: number;
+  }): Promise<{
+    code: number;
+    message: string;
+    data?: any;
+  }> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_STREAM, data),
+
+  // ── 安全模型操作 ─────────────────────────────────────
+  /** 测试模型连接（密钥由主进程注入） */
+  testModelConnection: (configId: number): Promise<{
+    success: boolean;
+    message: string;
+  }> => ipcRenderer.invoke(IPC_CHANNELS.MODEL_TEST, configId),
+
+  /** 清除模型密钥（通过 configId 删除安全存储中的对应密钥） */
+  clearModelKey: (configId: number): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MODEL_CLEAR_KEY, configId),
 
   // ── 系统信息 ────────────────────────────────────────────
   /** 获取当前平台 */
@@ -73,8 +99,6 @@ const api = {
     appVersion: string;
     pid: number;
     platform: string;
-    appPath: string;
-    userDataPath: string;
     uptime: number;
   }> => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_STATUS),
 

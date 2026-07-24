@@ -166,11 +166,10 @@ def confirm_memory(db: Session, memory_id: int) -> MemoryResponse:
         )
 
     memory.status = "confirmed"
+    # 同步 FTS5 索引（在同一事务中，确保崩溃后一致性）
+    _sync_memory_to_fts(db, memory)
     commit_or_rollback(db)
     logger.info(f"确认记忆: id={memory_id}")
-
-    # 同步到 FTS5 索引
-    _sync_memory_to_fts(db, memory)
 
     record_audit(
         db=db,
@@ -218,11 +217,10 @@ def correct_memory(db: Session, memory_id: int, data: MemoryCorrect) -> MemoryRe
     if memory.status != "confirmed":
         memory.status = "confirmed"
 
+    # 同步 FTS5 索引（在同一事务中，确保崩溃后一致性）
+    _sync_memory_to_fts(db, memory)
     commit_or_rollback(db)
     logger.info(f"纠正记忆: id={memory_id}, version={memory.version}")
-
-    # 同步到 FTS5 索引（更新内容）
-    _sync_memory_to_fts(db, memory)
 
     record_audit(
         db=db,
@@ -252,11 +250,10 @@ def reject_memory(db: Session, memory_id: int) -> MemoryResponse:
         )
 
     memory.status = "rejected"
+    # 从 FTS5 索引中移除（在同一事务中，确保崩溃后一致性）
+    _sync_memory_to_fts(db, memory)
     commit_or_rollback(db)
     logger.info(f"否定记忆: id={memory_id}")
-
-    # 从 FTS5 索引中移除
-    _sync_memory_to_fts(db, memory)
 
     record_audit(
         db=db,
@@ -277,13 +274,12 @@ def delete_memory(db: Session, memory_id: int) -> None:
     """
     memory = _get_memory_or_error(db, memory_id)
 
-    # 从 FTS5 索引中移除（在删除前执行）
+    # 先删除 FTS5 索引，后删除主表（在同一事务中，确保崩溃后一致性）
     try:
         db.execute(
             text("DELETE FROM memories_fts WHERE memory_id = :mid"),
             {"mid": memory_id},
         )
-        db.commit()
     except Exception as exc:
         logger.warning(f"FTS5 索引删除失败: memory_id={memory_id}, error={exc}")
 
@@ -361,6 +357,9 @@ def _sync_memory_to_fts(db: Session, memory: Memory) -> None:
     先删除再插入，保证索引与记忆状态一致。
     仅 confirmed/corrected 状态的记忆才会进入索引。
 
+    注意：不执行 db.commit()，由调用方统一提交事务。
+    调用方应在执行此函数后统一 commit_or_rollback(db)。
+
     Args:
         db: 数据库会话
         memory: 记忆实体
@@ -385,8 +384,6 @@ def _sync_memory_to_fts(db: Session, memory: Memory) -> None:
                     "type": memory.type,
                 },
             )
-
-        db.commit()
     except Exception as exc:
         logger.warning(f"FTS5 索引同步失败（不影响主操作）: memory_id={memory.id}, error={exc}")
 

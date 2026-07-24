@@ -1,0 +1,214 @@
+{
+  "findings": [
+    {
+      "id": "A-01",
+      "severity": "严重",
+      "title": "MemorySource 对 Message 的软引用在消息删除后产生孤儿记录",
+      "description": "MemorySource 使用 source_type + source_id 作为软引用指向消息，不是外键约束。当消息通过会话 CASCADE 删除、保留策略清理或手动删除时，关联的 MemorySource 记录不会被清理，导致 source_id 指向不存在的消息。该问题影响来源追溯的可信度。",
+      "location": "backend/app/models/memory.py:MemorySource 定义（第86-93行）；backend/app/services/data_governance.py:_cleanup_messages()（第882-903行）",
+      "implication": "用户查看记忆来源时，系统展示一个已不存在的消息 ID，无法追溯实际来源。长期运行后 MemorySource 表积累大量孤儿记录，影响数据质量和审计准确性。",
+      "recommendation": "在 _cleanup_messages 中增加 DELETE FROM memory_sources WHERE source_type='message' AND source_id IN (:msg_ids)。也可在 MemorySource 建模时考虑对 messages 表的外键约束（需配合 source_type 多态性改造）。",
+      "firstPrinciple": "级联完整性 — 删除/更新引用时必须正确处理级联关系"
+    },
+    {
+      "id": "A-02",
+      "severity": "中",
+      "title": "ProfileSource.memory_id 在记忆删除后产生悬空引用",
+      "description": "ProfileSource.memory_id 是一个普通整数字段（非外键），当关联的记忆被删除时 ProfileSource 记录的 memory_id 不会被级联清除，指向不存在的记忆。",
+      "location": "backend/app/models/profile.py:ProfileSource 定义（第86-91行）",
+      "implication": "画像的来源证据链断裂。当用户查看画像详情时，memory_id 指向已删除的记忆，无法定位来源。清理操作或保留策略执行后该问题会逐渐积累。",
+      "recommendation": "在 memory.py:delete_memory() 和 data_governance.py:_cleanup_model_by_time('memories') 中补充 ProfileSource 清理：DELETE FROM profile_sources WHERE memory_id = :memory_id。",
+      "firstPrinciple": "级联完整性 — 删除/更新引用时必须正确处理级联关系"
+    },
+    {
+      "id": "A-03",
+      "severity": "高",
+      "title": "保留策略按时间清理消息时未清理关联 MemorySource",
+      "description": "_cleanup_messages() 手动清理了 MemoryReference，但未处理 source_type='message' 的 MemorySource 记录。按时间过期清理消息后，引用这些消息的 MemorySource 记录成为孤儿。",
+      "location": "backend/app/services/data_governance.py:_cleanup_messages()（第882-903行）",
+      "implication": "保留策略执行后，MemorySource 积累指向已删除消息的无效记录，用户的记忆来源追溯显示不存在的消息 ID。",
+      "recommendation": "在 _cleanup_messages 的 msg_ids 查询之后，增加：db.execute(delete(MemorySource).where(MemorySource.source_type == 'message', MemorySource.source_id.in_(msg_ids)))。",
+      "firstPrinciple": "级联完整性 — 删除/更新引用时必须正确处理级联关系"
+    },
+    {
+      "id": "A-04",
+      "severity": "中",
+      "title": "ProfileSource 对活动的软引用在活动删除后产生悬空",
+      "description": "ProfileSource.source_type 可取值为 'activity'，但 source_id 同样是软引用，删除活动后不触发 ProfileSource 清理，导致画像来源指向不存在的活动。",
+      "location": "backend/app/models/profile.py:ProfileSource 第86-91行；backend/app/services/data_governance.py:_cleanup_model_by_time('activities')",
+      "implication": "行为统计数据来源链断裂，用户查看画像来源时可能看到已删除的活动引用。",
+      "recommendation": "在 data_governance.py:_cleanup_model_by_time('activities') 和活动手动删除中补充 ProfileSource 清理：DELETE FROM profile_sources WHERE source_type='activity' AND source_id IN (被删除的活动 ID)。",
+      "firstPrinciple": "级联完整性 — 删除/更新引用时必须正确处理级联关系"
+    },
+    {
+      "id": "B-01",
+      "severity": "严重",
+      "title": "流式对话并发控制存在 TOCTOU 竞态，同一会话可同时生成多条回复",
+      "description": "initialize_chat_stream() 检查同一会话是否存在 generating 状态的消息（第201-208行），但此检查与应用层状态修改之间没有数据库级排它锁。SQLite WAL 模式允许并发读。两个请求可同时通过检查，各自创建 generating 占位消息。",
+      "location": "backend/app/services/chat.py:initialize_chat_stream()（第175-267行，并发检查在第201-208行）",
+      "implication": "同一会话同时存在多条 generating 状态的回复，前端可能收到冲突的流式输出。用户看到多条不完整的回复，对话上下文混乱。",
+      "recommendation": "方案一：在创建 generating 消息前使用 SELECT...FOR UPDATE 锁定会话行（SQLite 支持）。方案二：在 sessions 表增加 is_generating 布尔字段并用原子 UPDATE 获取锁：UPDATE sessions SET is_generating=1 WHERE id=:sid AND is_generating=0。",
+      "firstPrinciple": "隔离性 — 并发操作不应互相干扰"
+    },
+    {
+      "id": "B-02",
+      "severity": "高",
+      "title": "活动批量提交中相同 source_id 事件导致唯一约束冲突",
+      "description": "submit_activity_events() 逐条处理事件（第80-88行），在同一事务内提交（第90-91行）。虽然 source_id 有 UNIQUE 约束且做了去重检查（第106-111行），但同一批次中两个相同 source_id 的事件，第二个事件通过去重检查时第一个尚未提交，最终提交时触发 UNIQUE 约束冲突。",
+      "location": "backend/app/services/activity.py:submit_activity_events() 和 _process_single_event() 的去重检查（第106-111行）",
+      "implication": "批量提交整体失败（如果约束异常未被捕获）或部分事件丢失。高频率活动采集场景下，此类冲突频繁发生。",
+      "recommendation": "方案一：在批量处理前预先查询所有已有 source_id，批次内构建 set 去重。方案二：使用 INSERT OR IGNORE 替代先查后插。方案三：单条处理单条提交（降低吞吐但保证可靠性）。",
+      "firstPrinciple": "幂等性 — 可重试的操作应幂等，重复执行产生相同结果"
+    },
+    {
+      "id": "B-03",
+      "severity": "高",
+      "title": "claim_pending_tasks 的 retry_count 无条件递增导致有效重试次数减少一次",
+      "description": "claim_pending_tasks() 的 UPDATE 语句中无条件执行 retry_count = retry_count + 1（第92行）。新创建的 pending 任务 retry_count 为 0，首次被领取后变为 1。后续 fail_task 判断 retry_count < max_retries（默认3），1 < 3 为 True，但实际已消耗一次重试次数。max_retries=3 只允许 2 次重试而非 3 次。",
+      "location": "backend/app/services/task.py:claim_pending_tasks() 第85-101行；fail_task() 第146行",
+      "implication": "任务的预期重试次数与配置不符。用户配置 max_retries=3 期望获得 3 次重试机会，实际只获得 2 次。关键任务可能比预期更早进入最终失败状态。",
+      "recommendation": "将 retry_count 递增改为仅在 status='retrying' 时执行。或在 claim 时区分首次领取（不递增 retry_count）和重试领取（递增 retry_count）。",
+      "firstPrinciple": "边界一致性 — 系统边界上的数据一致性协议必须明确"
+    },
+    {
+      "id": "B-04",
+      "severity": "严重",
+      "title": "超时恢复与原执行器的竞态导致同一任务被并发执行两次",
+      "description": "recover_stuck_tasks() 将 processing 状态任务批量恢复为 retrying（第179-201行），但原执行线程可能仍在运行（如等待慢速 LLM API 响应）。原线程完成后调用 complete_task() 设置 status='completed'。同时调度器已重新领取该任务第二次执行。两个实例同时运行同一任务。",
+      "location": "backend/app/services/task.py:recover_stuck_tasks()（第179-201行）；app/tasks/scheduler.py:_process_pending() 和 _recover_tasks()（第78-93行）",
+      "implication": "同一段对话内容被模型重复提取两次记忆，产生重复的候选记忆条目。对于画像提取任务，可能导致重复的画像特征。虽然 MemoryExtract 有 source_version 校验，但校验在第二次执行开始时也会通过。",
+      "recommendation": "方案一：在 recover_stuck_tasks 中设置版本号原子递增，原 complete/fail 检测版本已变更则跳过状态更新。方案二：在 BackgroundTask 表增加 generation 字段，每次恢复递增。方案三：引入协同退出信号，让原执行线程在检测到任务被恢复后自行中止。",
+      "firstPrinciple": "原子性 — 不可分割的操作序列必须整体成功或整体失败"
+    },
+    {
+      "id": "C-01",
+      "severity": "严重",
+      "title": "FTS5 索引同步操作不在确认/纠正/否定的事务内，崩溃后索引永久不一致",
+      "description": "confirm_memory() 先提交记忆状态更新（第169行 commit_or_rollback），再在单独的事务中同步 FTS5（第173行 _sync_memory_to_fts 内部有独立 db.commit）。如果 FTS5 同步过程中进程崩溃，记忆状态已更新但 FTS5 索引未同步。同一问题也存在于 correct_memory() 和 reject_memory() 中。",
+      "location": "backend/app/services/memory.py:_sync_memory_to_fts()（第358-391行）；confirm_memory()（第155-186行）；correct_memory()（第189-238行）；reject_memory()（第241-269行）",
+      "implication": "记忆确认后无法被 FTS5 检索，系统被重启或崩溃后索引永久不一致。在崩溃恢复场景下，用户确认/纠正的记忆在检索时不可见。",
+      "recommendation": "将记忆状态更新和 FTS5 索引更新放在同一事务中：先执行 FTS5 操作，再更新 memory.status，最后统一 commit_or_rollback。或使用 SQLite 的 FTS5 content-sync 触发器自动同步。",
+      "firstPrinciple": "事实与派生分离 — 原始事实和派生索引/视图必须有明确界限但保持同步"
+    },
+    {
+      "id": "C-02",
+      "severity": "严重",
+      "title": "delete_memory 使用独立事务操作 FTS5 和主表，崩溃后状态不一致",
+      "description": "delete_memory() 先提交 FTS5 删除（第282-286行：db.execute + db.commit），再提交 memory 删除（第299-300行：db.delete + commit_or_rollback）。两个独立事务。如果第一个成功第二个失败（如外键约束等），FTS5 索引中记忆已被清除但事实数据仍在。",
+      "location": "backend/app/services/memory.py:delete_memory()（第272-301行，第286行有单独的 db.commit）",
+      "implication": "崩溃场景：记忆仍然存在于 memories 表但 FTS5 索引中没有该记忆，或者 FTS5 索引被清除但记忆未被删除。索引与事实永久不一致。",
+      "recommendation": "将 FTS5 操作和 memory 删除放在同一事务中：先执行 FTS5 DELETE + db.delete(memory)，最后统一 commit_or_rollback。删除第286行单独的 db.commit()。",
+      "firstPrinciple": "原子性 — 不可分割的操作序列必须整体成功或整体失败"
+    },
+    {
+      "id": "C-03",
+      "severity": "中",
+      "title": "FTS5 存储事实数据拷贝，缺乏修改后的自动同步机制",
+      "description": "FTS5 的 content 列存储 memory.content 的完整拷贝，但仅 confirm/correct/reject/delete 时调用 _sync_memory_to_fts。如果未来增加直接修改 Memory.content 的接口，FTS5 索引不会收到更新通知。",
+      "location": "backend/app/services/memory.py:_sync_memory_to_fts()（第358-391行）",
+      "implication": "直接修改 memory.content 后，FTS5 索引包含过时内容。后续检索返回旧版记忆内容，影响对话上下文质量。",
+      "recommendation": "方案一：使用 SQLite FTS5 的 content-sync 功能（CREATE VIRTUAL TABLE ... USING fts5(content=memories, content_rowid=...)）让数据库自动同步。方案二：在 Memory 模型上通过 SQLAlchemy event listen('after_update') 自动触发同步。",
+      "firstPrinciple": "事实与派生分离 — 原始事实和派生索引/视图必须有明确界限但保持同步"
+    },
+    {
+      "id": "C-04",
+      "severity": "高",
+      "title": "英文检索路径直接依赖 FTS5 索引，索引过期时降级为零结果",
+      "description": "retrieval._search_english_fts() 直接查询 memories_fts 虚拟表（第221-271行），完全依赖 FTS5 索引状态。当 FTS5 索引过期（如 C-01/C-02 描述的崩溃场景），该路径返回空结果，系统降级显示无记忆。而中文 LIKE 检索直接查 memories 表不受影响。",
+      "location": "backend/app/services/retrieval.py:_search_english_fts()（第221-271行）",
+      "implication": "FTS5 索引过期时，英文检索路径返回零结果而中文路径正常。造成中英文搜索结果行为不一致，用户可能误以为助手不记得相关信息。",
+      "recommendation": "在 _search_english_fts 返回空结果时增加回退策略：回退到 _search_chinese_like 或使用 Memory.content.contains() 查询英文关键词，确保检索降级不会完全丢失记忆。",
+      "firstPrinciple": "事实与派生分离 — 原始事实和派生索引/视图必须有明确界限"
+    },
+    {
+      "id": "D-01",
+      "severity": "中",
+      "title": "记忆提取任务创建失败无补偿机制，对话已保存但记忆永久丢失",
+      "description": "_try_create_memory_extract_task() 将创建后台任务的调用包裹在 try/except 中，捕获所有异常并仅记录日志（第445-447行）。如果任务创建失败（如数据库繁忙、事务冲突），对话已完成保存但 memory.extract 任务未被创建。没有手动触发重试入口或后续恢复机制。",
+      "location": "backend/app/services/chat.py:_try_create_memory_extract_task()（第392-447行，异常处理在第445-447行）",
+      "implication": "部分对话内容永远无法被提取为记忆，导致用户长期记忆不完整。该问题无声无息发生，用户无感知。",
+      "recommendation": "方案一：增加离线补偿扫描器，定期检查过去 N 小时内完成对话但未创建 memory.extract 任务的会话。方案二：在前端对话界面增加手动触发按钮。方案三：将任务创建改为不可失败的阻塞操作（移除 try/except，让异常传播）。",
+      "firstPrinciple": "一致性优先 — 事实数据必须一致，派生数据可以不一致（但应有最终一致机制）"
+    },
+    {
+      "id": "D-02",
+      "severity": "严重",
+      "title": "API Key 一次性取出（pop）导致后台任务重试必然失败",
+      "description": "handle_memory_extract() 使用 api_key_cache.pop(api_key_cache_key) 获取 API Key（第75行），此操作一次性取出后从缓存删除。若任务执行失败触发重试，handle_memory_extract 再次被调用时 pop 返回 None，任务立即以 API Key 不可用失败。任何需要 API Key 的后台任务在首次失败后重试必然失败。",
+      "location": "backend/app/tasks/memory_extract.py:handle_memory_extract() 第75行；app/core/api_key_cache.py:pop() 第45-59行",
+      "implication": "网络波动、模型超时等临时故障触发的任务重试完全失效。max_retries 配置对需要 API Key 的任务形同虚设。",
+      "recommendation": "方案一：改为 peek（只读不删），在任务彻底终态（completed/failed）时再由调度器统一清理。方案二：增加 TTL-based 的 peek-with-refresh 机制，允许多次读取。方案三：在 chat 服务中向任务 payload 注入 API Key（仅限进程内存，不持久化到 SQLite）。",
+      "firstPrinciple": "幂等性 — 可重试的操作应幂等，重复执行产生相同结果"
+    },
+    {
+      "id": "D-03",
+      "severity": "高",
+      "title": "画像提取全局 API Key 缓存使用 pop 导致多任务竞争",
+      "description": "handle_profile_extract() 先 peek_global 尝试只读获取，若失败则回退到 get_global（使用 pop，第82-85行）。get_global 一次性取出并删除。如果两个画像提取任务同时运行，第二个任务调用 get_global 将返回 None，即使缓存中有有效 API Key。",
+      "location": "backend/app/tasks/profile_extract.py:handle_profile_extract() 第80-86行；app/core/api_key_cache.py:get_global() 第90-96行",
+      "implication": "并行执行的画像提取任务中后执行的任务获取不到 API Key。虽然当前调度器单线程顺序执行，但若未来引入并发或模型调用耗时较长，此问题将暴露。",
+      "recommendation": "将 get_global 改为 peek_global（只读不删），在应用退出或明确的安全清理时统一清除 API Key 缓存。或增加缓存引用计数，允许多个后台任务共享读取。",
+      "firstPrinciple": "边界一致性 — 系统边界上的数据一致性协议必须明确"
+    },
+    {
+      "id": "D-04",
+      "severity": "中",
+      "title": "记忆提取任务仅在开始时校验来源，模型中耗时期间来源变更无法检出",
+      "description": "handle_memory_extract() 在开始时调用 check_source_valid() 校验来源版本（第86-88行）。后续模型调用（_do_extract 中的 chat_sync）可能耗时数秒至数十秒。在此期间来源内容可能被用户编辑或删除，但任务不会中止或二次校验。",
+      "location": "backend/app/tasks/memory_extract.py:handle_memory_extract() 第86-88行；_do_extract() 第143-212行",
+      "implication": "任务使用已过时的对话内容提取记忆，生成与当前事实不符的候选记忆。用户随后需要手动否定这些记忆，增加用户工作量。",
+      "recommendation": "方案一：在 _do_extract 保存候选记忆前增加第二次来源校验。方案二：缩短 source_version 到直接与数据库行版本绑定（如使用 updated_at 字段）。方案三：在 _do_extract 中查询确认消息的 updated_at 无变化。",
+      "firstPrinciple": "一致性优先 — 事实数据必须一致，派生数据可以不一致"
+    },
+    {
+      "id": "E-01",
+      "severity": "高",
+      "title": "record_audit 内部调用 commit_or_rollback 迫使事务提前提交",
+      "description": "record_audit() 内部调用 commit_or_rollback（第48行），每次审计记录写入都在单独事务中提交。例如 goal.py:delete_goal() 在删除前先 record_audit（已提交），主删除操作失败时审计日志已持久化。多处服务层代码均使用此模式。",
+      "location": "backend/app/services/audit.py:record_audit() 第48行",
+      "implication": "主操作失败但审计日志已提交。产生已记录但未执行的操作审计记录，审计数据与实际数据状态不一致，审计可信度降低。",
+      "recommendation": "移除 record_audit 内部的 commit_or_rollback，改为仅在 audit.py 中添加日志到 session，由调用方的 commit_or_rollback 统一控制事务边界。或引入两阶段审计：操作前记录 pending 审计，操作成功后再确认。",
+      "firstPrinciple": "原子性 — 不可分割的操作序列必须整体成功或整体失败"
+    },
+    {
+      "id": "E-02",
+      "severity": "高",
+      "title": "delete_export/delete_backup 先删除文件后操作数据库，文件已删但记录仍在",
+      "description": "delete_export() 先 os.remove() 删除物理文件（第303-308行），再 db.delete() 后 commit_or_rollback（第318-319行）。如果数据库提交失败，文件已删除但数据库记录仍在。delete_backup() 存在相同问题（第679-695行）。",
+      "location": "backend/app/services/data_governance.py:delete_export()（第299-319行）；delete_backup()（第675-696行）",
+      "implication": "数据库提交失败后，记录仍存在但文件已删除。用户点击下载得到文件不存在的错误。此状态不可逆。",
+      "recommendation": "将文件删除放在数据库提交成功之后执行。先 db.delete + commit_or_rollback，确认提交成功后再 os.remove。若 os.remove 失败则记录告警但数据库状态一致。",
+      "firstPrinciple": "原子性 — 不可分割的操作序列必须整体成功或整体失败"
+    },
+    {
+      "id": "E-03",
+      "severity": "严重",
+      "title": "备份恢复无写入暂停机制，备份文件非一致性快照",
+      "description": "create_backup() 执行 VACUUM 后 shutil.copy2 复制文件（第353-356行）。VACUUM 完成后到文件复制完成之间，其他线程的写入操作可能修改数据库。文档中声称的暂停写入->备份->恢复写入流程未实现。restore_from_backup 关闭 session 后替换文件，未处理进行中的请求。",
+      "location": "backend/app/services/data_governance.py:create_backup()（第328-391行）；restore_from_backup()（第461-573行）",
+      "implication": "备份文件可能包含部分写入的数据，处于不一致状态。从该备份恢复后数据可能违反引用完整性。恢复过程中正在进行的 API 请求得到数据库关闭的错误。",
+      "recommendation": "方案一：使用 SQLite 的 .backup API（sqlite3_backup_init）保证一致性快照。方案二：实现显式写入锁定，备份完成后再释放。方案三：恢复前优雅关闭所有活跃 session 并等待进行中的请求完成。",
+      "firstPrinciple": "边界一致性 — 系统边界上的数据一致性协议必须明确"
+    },
+    {
+      "id": "E-04",
+      "severity": "中",
+      "title": "get_background_db_session 缺少异常回滚，后台任务异常后 session 直接关闭",
+      "description": "get_background_db_session() 的 finally 块仅执行 db.close()（第65行），没有 try-except-rollback 保护。如果后台任务中 db 操作异常，session 直接关闭不执行回滚。SQLite 未回滚的事务可能导致连接返回连接池时仍持有锁。",
+      "location": "backend/app/core/database.py:get_background_db_session()（第58-66行）",
+      "implication": "后台任务异常后连接可能持有未释放的锁。连接池（pool_size=5）中有限的连接资源被占用，影响后续请求。",
+      "recommendation": "增加异常回滚：在 finally 前增加 except 块执行 db.rollback()。改为：try: yield db; except: db.rollback(); raise; finally: db.close()。",
+      "firstPrinciple": "隔离性 — 并发操作不应互相干扰"
+    },
+    {
+      "id": "E-05",
+      "severity": "高",
+      "title": "run_chat_stream 的后台操作各自独立事务，中间失败不触发整体回滚",
+      "description": "run_chat_stream() 中 complete_assistant_message -> _try_create_memory_extract_task -> save_memory_references 三个操作各自内部调用 commit_or_rollback（第317-336行）。如果 save_memory_references 失败，前两个操作已提交无法回滚，且失败被 logger.warning 静默吞没。",
+      "location": "backend/app/services/chat.py:run_chat_stream() 第317-336行",
+      "implication": "会话回复已保存但记忆引用丢失（被静默吞没），或记忆提取任务未创建。用户无感知，但长期记忆提取和引用跟踪功能可能静默退化。",
+      "recommendation": "将三个操作组合为单一事务：移除各函数内部的 commit_or_rollback，在最后统一提交。发现任一步骤失败时整体回滚。",
+      "firstPrinciple": "原子性 — 不可分割的操作序列必须整体成功或整体失败"
+    }
+  ]
+}

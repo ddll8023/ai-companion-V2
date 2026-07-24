@@ -79,9 +79,6 @@ def handle_profile_extract(payload: dict | None) -> str | None:
         # 从进程内存缓存获取 API Key（不经过前端/Renderer）
         api_key = api_key_cache.peek_global()
         if not api_key:
-            # 回退：尝试一次性取出（兼容旧逻辑）
-            api_key = api_key_cache.get_global()
-        if not api_key:
             logger.warning("画像提取: API Key 缓存未命中（请先进行一次对话）")
             return json.dumps({"extracted": 0, "error": "API Key 不可用（请先进行一次对话）"})
 

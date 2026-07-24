@@ -405,6 +405,36 @@ function saveSecureStore(store: Record<string, string>): void {
 
 // ── IPC 处理器 ───────────────────────────────────────────────────────
 
+/** API 访问控制规则。
+ *
+ * read: 允许所有 GET 请求，但排除管理接口
+ * write: 允许 POST/PUT 请求，排除管理接口和隐私规则修改
+ * delete: 允许 DELETE 请求，排除数据文件删除
+ */
+const API_ACCESS_RULES = {
+  /** 只读：允许全部 GET，阻断管理接口 */
+  read: {
+    denylist: ['/api/v1/data/clear', '/api/v1/data/backup', '/api/v1/data/restore',
+               '/api/v1/data/exports/', '/api/v1/data/backups/',
+               '/api/v1/data/clear-all'],
+  },
+  /** 写入：阻断管理接口和隐私规则修改 */
+  write: {
+    denylist: ['/api/v1/data/clear', '/api/v1/data/backup', '/api/v1/data/restore',
+               '/api/v1/data/clear-all',
+               '/api/v1/activities/privacy-rules'],
+  },
+  /** 删除：阻断导出/备份文件删除 */
+  delete: {
+    denylist: ['/api/v1/data/exports/', '/api/v1/data/backups/'],
+  },
+};
+
+function isApiPathAllowed(urlPath: string, accessLevel: 'read' | 'write' | 'delete'): boolean {
+  const rules = API_ACCESS_RULES[accessLevel];
+  return !rules.denylist.some((blocked) => urlPath.includes(blocked));
+}
+
 /** 静态能力定义（异步权限检测失败时的降级 fallback）。 */
 function getStaticCapabilities(): PermissionState[] {
   const platform = getPlatform();
@@ -450,10 +480,13 @@ function getStaticCapabilities(): PermissionState[] {
 }
 
 function setupIpcHandlers(): void {
-  // API 代理：GET 请求
+  // API 代理：GET 请求（只读）
   ipcMain.handle(IPC_CHANNELS.API_GET, async (_event, url: string) => {
     if (!backendPort || !isBackendReady) {
       return { code: 5001, message: '本地服务尚未就绪' };
+    }
+    if (!isApiPathAllowed(url, 'read')) {
+      return { code: 403, message: '权限不足：该 API 不允许通过 Renderer 访问' };
     }
     try {
       return await apiRequest('GET', url);
@@ -462,10 +495,13 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // API 代理：POST 请求
+  // API 代理：POST 请求（写入）
   ipcMain.handle(IPC_CHANNELS.API_POST, async (_event, url: string, data?: unknown) => {
     if (!backendPort || !isBackendReady) {
       return { code: 5001, message: '本地服务尚未就绪' };
+    }
+    if (!isApiPathAllowed(url, 'write')) {
+      return { code: 403, message: '权限不足：该 API 不允许通过 Renderer 访问' };
     }
     try {
       return await apiRequest('POST', url, data);
@@ -474,10 +510,13 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // API 代理：PUT 请求
+  // API 代理：PUT 请求（写入）
   ipcMain.handle(IPC_CHANNELS.API_PUT, async (_event, url: string, data?: unknown) => {
     if (!backendPort || !isBackendReady) {
       return { code: 5001, message: '本地服务尚未就绪' };
+    }
+    if (!isApiPathAllowed(url, 'write')) {
+      return { code: 403, message: '权限不足：该 API 不允许通过 Renderer 访问' };
     }
     try {
       return await apiRequest('PUT', url, data);
@@ -491,6 +530,9 @@ function setupIpcHandlers(): void {
     if (!backendPort || !isBackendReady) {
       return { code: 5001, message: '本地服务尚未就绪' };
     }
+    if (!isApiPathAllowed(url, 'delete')) {
+      return { code: 403, message: '权限不足：该 API 不允许通过 Renderer 访问' };
+    }
     try {
       return await apiRequest('DELETE', url);
     } catch (e: any) {
@@ -498,7 +540,7 @@ function setupIpcHandlers(): void {
     }
   });
 
-  // 安全存储：设置密钥
+  // 安全存储：设置密钥（只写通道，Renderer 不可读取密钥）
   ipcMain.handle(IPC_CHANNELS.KEYSTORE_SET, async (_event, key: string, value: string) => {
     if (!safeStorage.isEncryptionAvailable()) {
       return { success: false, error: '当前系统不支持安全存储' };
@@ -509,25 +551,13 @@ function setupIpcHandlers(): void {
     return { success: true };
   });
 
-  // 安全存储：获取密钥
-  ipcMain.handle(IPC_CHANNELS.KEYSTORE_GET, async (_event, key: string) => {
-    const store = loadSecureStore();
-    return { success: true, value: store[key] ?? null };
-  });
-
-  // 安全存储：删除密钥
-  ipcMain.handle(IPC_CHANNELS.KEYSTORE_DELETE, async (_event, key: string) => {
-    const store = loadSecureStore();
-    delete store[key];
-    saveSecureStore(store);
-    return { success: true };
-  });
-
   // 安全存储：检查密钥是否存在
   ipcMain.handle(IPC_CHANNELS.KEYSTORE_HAS, async (_event, key: string) => {
     const store = loadSecureStore();
     return { success: true, has: key in store };
   });
+
+  // ── 安全通信 IPC（密钥由主进程注入，Renderer 不接触密钥） ──
 
   // 获取平台信息
   ipcMain.handle(IPC_CHANNELS.GET_PLATFORM, () => {
@@ -539,7 +569,7 @@ function setupIpcHandlers(): void {
     return app.getVersion();
   });
 
-  // 获取 Electron 运行时状态
+  // 获取 Electron 运行时状态（不包含敏感路径信息）
   ipcMain.handle(IPC_CHANNELS.GET_APP_STATUS, () => {
     return {
       electronVersion: process.versions.electron,
@@ -548,8 +578,6 @@ function setupIpcHandlers(): void {
       appVersion: app.getVersion(),
       pid: process.pid,
       platform: process.platform,
-      appPath: app.getAppPath(),
-      userDataPath: app.getPath('userData'),
       uptime: Math.floor(process.uptime()),
     };
   });
@@ -570,6 +598,73 @@ function setupIpcHandlers(): void {
   });
 
   // ── 活动采集 IPC 处理器 ─────────────────────────────────────────
+
+  // 流式对话：Renderer 发送消息（不含密钥），主进程注入密钥后转发
+  ipcMain.handle(IPC_CHANNELS.CHAT_STREAM, async (_event, data: {
+    sessionId: number;
+    content: string;
+    configId: number;
+  }) => {
+    if (!backendPort || !isBackendReady) {
+      return { code: 5001, message: '本地服务尚未就绪' };
+    }
+    try {
+      // 从 keystore 读取 API Key（主进程内部操作，密钥不进入 Renderer）
+      const store = loadSecureStore();
+      const apiKey = store[`model_key_${data.configId}`];
+      if (!apiKey) {
+        return { code: 4001, message: 'API Key 未配置' };
+      }
+
+      // 注入密钥后向后端发送请求
+      const result = await apiRequest(
+        'POST',
+        `/api/v1/chat/sessions/${data.sessionId}/chat`,
+        {
+          content: data.content,
+          api_key: apiKey,
+        },
+      );
+      return result;
+    } catch (e: any) {
+      return { code: 5001, message: e.message || '对话生成失败' };
+    }
+  });
+
+  // 模型连接测试：Renderer 发送 configId（不含密钥），主进程注入密钥后测试
+  ipcMain.handle(IPC_CHANNELS.MODEL_TEST, async (_event, configId: number) => {
+    if (!backendPort || !isBackendReady) {
+      return { success: false, message: '本地服务尚未就绪' };
+    }
+    try {
+      const store = loadSecureStore();
+      const apiKey = store[`model_key_${configId}`];
+      if (!apiKey) {
+        return { success: false, message: '密钥已丢失' };
+      }
+
+      const result: any = await apiRequest(
+        'POST',
+        `/api/v1/models/configs/${configId}/test`,
+        { api_key: apiKey },
+      );
+
+      if (result && result.code === 0) {
+        return { success: true, message: result.message || '连接成功' };
+      }
+      return { success: false, message: (result && result.message) || '连接测试失败' };
+    } catch (e: any) {
+      return { success: false, message: e.message || '连接测试失败' };
+    }
+  });
+
+  // 清除模型密钥：Renderer 通过 configId 发起，主进程从 keystore 删除
+  ipcMain.handle(IPC_CHANNELS.MODEL_CLEAR_KEY, async (_event, configId: number) => {
+    const store = loadSecureStore();
+    delete store[`model_key_${configId}`];
+    saveSecureStore(store);
+    return { success: true };
+  });
   // 活动采集由 Main 进程管理（通过 ActivityCaptureManager），
   // Renderer 只能通过受控 IPC 控制开关和查询状态。
 
@@ -609,7 +704,7 @@ function createWindow(): void {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,  // 启用沙箱：Renderer 进程在 OS 级隔离中运行
     },
   });
 

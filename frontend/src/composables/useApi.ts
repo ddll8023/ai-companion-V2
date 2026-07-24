@@ -4,6 +4,11 @@
  * 浏览器开发环境：使用 HTTP 适配器（Axios）
  * Electron 正式环境：使用 IPC 适配器（通过 preload 桥接）
  *
+ * 安全设计：
+ * - API Key 由 Electron 主进程管理/注入，Renderer 不接触密钥
+ * - 对话、连接测试等敏感操作通过专用 IPC 通道，由主进程注入密钥
+ * - 页面不感知密钥的获取和注入方式
+ *
  * 页面和 Store 使用统一业务接口，不感知通信差异。
  * 环境判断集中在通信层，不在页面中散落 window.electronAPI 判断。
  */
@@ -14,31 +19,17 @@ import request from '@/api/request'
 /** 运行环境类型 */
 export type RuntimeEnv = 'browser' | 'electron'
 
-/** 通信适配器接口 */
+/** 通信适配器接口（不包含密钥操作，密钥由主进程管理） */
 export interface CommunicationAdapter {
   get: <T>(url: string) => Promise<ApiResponse<T>>
   post: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
   put: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
   delete: <T>(url: string) => Promise<ApiResponse<T>>
-
-  /** 获取模型 API Key（Electron 模式从 keystore 获取，浏览器模式返回 undefined） */
-  resolveApiKey: (configId: number) => Promise<string | undefined>
-
-  /** 保存模型 API Key（Electron 模式写入 keystore，浏览器模式返回 false） */
-  saveApiKey: (configId: number, apiKey: string) => Promise<boolean>
-
-  /** 删除模型 API Key（Electron 模式从 keystore 删除，浏览器模式返回 false） */
-  deleteApiKey: (configId: number) => Promise<boolean>
 }
 
 /** 从 AxiosResponse 中提取 ApiResponse */
 function extractData<T>(axiosPromise: Promise<{ data: ApiResponse<T> }>): Promise<ApiResponse<T>> {
   return axiosPromise.then(res => res.data)
-}
-
-/** 从运行时环境中获取模型 API Key 的键名。 */
-function getKeyName(configId: number): string {
-  return `model_key_${configId}`
 }
 
 /** HTTP 适配器（浏览器开发模式） */
@@ -47,35 +38,6 @@ const httpAdapter: CommunicationAdapter = {
   post: <T>(url: string, data?: unknown) => extractData(request.post<ApiResponse<T>>(url, data)),
   put: <T>(url: string, data?: unknown) => extractData(request.put<ApiResponse<T>>(url, data)),
   delete: <T>(url: string) => extractData(request.delete<ApiResponse<T>>(url)),
-
-  resolveApiKey: async (configId: number) => {
-    // 浏览器模式：从 localStorage 读取（开发时手动设置）
-    try {
-      return localStorage.getItem(getKeyName(configId)) || undefined
-    } catch {
-      return undefined
-    }
-  },
-
-  saveApiKey: async (configId: number, apiKey: string) => {
-    // 浏览器模式：保存到 localStorage（开发时使用）
-    try {
-      localStorage.setItem(getKeyName(configId), apiKey)
-      return true
-    } catch {
-      return false
-    }
-  },
-
-  deleteApiKey: async (configId: number) => {
-    // 浏览器模式：从 localStorage 删除
-    try {
-      localStorage.removeItem(getKeyName(configId))
-      return true
-    } catch {
-      return false
-    }
-  },
 }
 
 /** IPC 适配器（Electron 正式环境） */
@@ -107,33 +69,6 @@ const ipcAdapter: CommunicationAdapter = {
       throw new Error(result.message || '请求失败')
     }
     return result as ApiResponse<T>
-  },
-
-  resolveApiKey: async (configId: number) => {
-    try {
-      const result = await window.electronAPI!.keystoreGet(`model_key_${configId}`)
-      return result.success ? result.value ?? undefined : undefined
-    } catch {
-      return undefined
-    }
-  },
-
-  saveApiKey: async (configId: number, apiKey: string) => {
-    try {
-      const result = await window.electronAPI!.keystoreSet(`model_key_${configId}`, apiKey)
-      return result.success
-    } catch {
-      return false
-    }
-  },
-
-  deleteApiKey: async (configId: number) => {
-    try {
-      await window.electronAPI!.keystoreDelete(`model_key_${configId}`)
-      return true
-    } catch {
-      return false
-    }
   },
 }
 
@@ -185,5 +120,8 @@ export function useApi() {
           window.electronAPI!.removeBackendStatusListener()
         }
       : undefined,
+
+    // 密钥操作不再通过 CommunicationAdapter 暴露。
+    // 密钥由主进程管理，通过专用 IPC 通道（streamChat, testModelConnection）由主进程注入。
   }
 }

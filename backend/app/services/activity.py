@@ -474,6 +474,19 @@ def delete_activity(db: Session, activity_id: int) -> None:
         summary=f"删除活动记录: {activity.app_name} ({activity.started_at})",
     )
 
+    # 清理关联的画像来源（软引用，无外键约束）
+    try:
+        from app.models.profile import ProfileSource
+        from sqlalchemy import delete
+        db.execute(
+            delete(ProfileSource).where(
+                ProfileSource.source_type == "activity",
+                ProfileSource.source_id == activity_id,
+            )
+        )
+    except ImportError:
+        pass
+
     db.delete(activity)
     commit_or_rollback(db)
     logger.info(f"删除活动记录: id={activity_id}")

@@ -13,6 +13,7 @@ import json
 import math
 import os
 import shutil
+import sqlite3
 from datetime import datetime, timedelta
 
 from sqlalchemy import delete, desc, func, select, text
@@ -300,13 +301,7 @@ def delete_export(db: Session, export_id: int) -> None:
     """删除导出记录及其文件。"""
     export = _get_export_or_error(db, export_id)
 
-    try:
-        if os.path.exists(export.file_path):
-            os.remove(export.file_path)
-            logger.debug(f"删除导出文件: {export.file_path}")
-    except OSError as exc:
-        logger.warning(f"删除导出文件失败: {export.file_path}, {exc}")
-
+    # 先删除数据库记录（确保记录被删除后再清理文件）
     record_audit(
         db=db,
         action="data.export.delete",
@@ -319,6 +314,14 @@ def delete_export(db: Session, export_id: int) -> None:
     commit_or_rollback(db)
     logger.info(f"删除导出记录: id={export_id}")
 
+    # 确认记录已删除后，再删除物理文件
+    try:
+        if os.path.exists(export.file_path):
+            os.remove(export.file_path)
+            logger.debug(f"删除导出文件: {export.file_path}")
+    except OSError as exc:
+        logger.warning(f"删除导出文件失败（数据库记录已清理）: {export.file_path}, {exc}")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # 备份与恢复
@@ -328,7 +331,8 @@ def delete_export(db: Session, export_id: int) -> None:
 def create_backup(db: Session, request: BackupCreateRequest) -> BackupResponse:
     """创建数据库备份。
 
-    将当前 SQLite 数据库文件复制到备份目录。
+    使用 SQLite 在线备份 API（sqlite3.backup）保证一致性快照，
+    不阻塞主数据库连接的其他写入操作。
 
     Args:
         db: 数据库会话
@@ -349,12 +353,18 @@ def create_backup(db: Session, request: BackupCreateRequest) -> BackupResponse:
     backup_file = os.path.join(backup_dir, f"backup_{timestamp}.db")
 
     try:
-        # 执行 SQLite 在线备份
-        db.execute(text("VACUUM"))
-        db.commit()
-
-        shutil.copy2(db_file, backup_file)
-    except OSError as exc:
+        # 使用 SQLite 备份 API 创建一致性快照
+        # 与 VACUUM + shutil.copy2 不同，此方案：
+        # 1. 不要求排它锁，备份期间其他连接仍可写入
+        # 2. 保证快照一致性（不会出现部分写入的数据）
+        source_conn = sqlite3.connect(db_file)
+        dest_conn = sqlite3.connect(backup_file)
+        try:
+            source_conn.backup(dest_conn, pages=4096)
+        finally:
+            source_conn.close()
+            dest_conn.close()
+    except Exception as exc:
         raise ServiceException(
             ErrorCode.INTERNAL_ERROR, f"备份文件创建失败: {exc}",
         ) from exc
@@ -676,13 +686,7 @@ def delete_backup(db: Session, backup_id: int) -> None:
     """删除备份记录及其文件。"""
     backup = _get_backup_or_error(db, backup_id)
 
-    try:
-        if os.path.exists(backup.file_path):
-            os.remove(backup.file_path)
-            logger.debug(f"删除备份文件: {backup.file_path}")
-    except OSError as exc:
-        logger.warning(f"删除备份文件失败: {backup.file_path}, {exc}")
-
+    # 先删除数据库记录（确保记录被删除后再清理文件）
     record_audit(
         db=db,
         action="data.backup.delete",
@@ -694,6 +698,14 @@ def delete_backup(db: Session, backup_id: int) -> None:
     db.delete(backup)
     commit_or_rollback(db)
     logger.info(f"删除备份记录: id={backup_id}")
+
+    # 确认记录已删除后，再删除物理文件
+    try:
+        if os.path.exists(backup.file_path):
+            os.remove(backup.file_path)
+            logger.debug(f"删除备份文件: {backup.file_path}")
+    except OSError as exc:
+        logger.warning(f"删除备份文件失败（数据库记录已清理）: {backup.file_path}, {exc}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -855,9 +867,9 @@ def _cleanup_target_type(db: Session, target_type: str, cutoff: datetime) -> int
         删除的记录数
     """
     cleanup_map = {
-        "activities": _cleanup_model_by_time(db, Activity, cutoff),
+        "activities": _cleanup_activities(db, cutoff),
         "messages": _cleanup_messages(db, cutoff),
-        "memories": _cleanup_model_by_time(db, Memory, cutoff),
+        "memories": _cleanup_memories(db, cutoff),
         "profiles": _cleanup_model_by_time(db, Profile, cutoff),
         "audit_logs": _cleanup_model_by_time(db, AuditLog, cutoff),
         "backups": _cleanup_backups_by_time(db, cutoff),
@@ -880,7 +892,7 @@ def _cleanup_model_by_time(db: Session, model_class, cutoff: datetime) -> int:
 
 
 def _cleanup_messages(db: Session, cutoff: datetime) -> int:
-    """按时间清理消息（同时清理关联的记忆引用）。"""
+    """按时间清理消息（同时清理关联的记忆来源和画像来源）。"""
     # 先获取要删除的消息 ID
     msg_ids = db.scalars(
         select(Message.id).where(Message.created_at < cutoff)
@@ -894,9 +906,77 @@ def _cleanup_messages(db: Session, cutoff: datetime) -> int:
         delete(MemoryReference).where(MemoryReference.message_id.in_(msg_ids))
     )
 
+    # 清理关联的记忆来源（软引用，无外键约束）
+    db.execute(
+        delete(MemorySource).where(
+            MemorySource.source_type == "message",
+            MemorySource.source_id.in_(msg_ids),
+        )
+    )
+
+    # 清理关联的画像来源（软引用，无外键约束）
+    db.execute(
+        delete(ProfileSource).where(
+            ProfileSource.source_type == "message",
+            ProfileSource.source_id.in_(msg_ids),
+        )
+    )
+
     # 清理消息
     result = db.execute(
         delete(Message).where(Message.id.in_(msg_ids))
+    )
+
+    commit_or_rollback(db)
+    return result.rowcount or 0
+
+
+def _cleanup_activities(db: Session, cutoff: datetime) -> int:
+    """按时间清理活动记录（同时清理关联的画像来源）。"""
+    activity_ids = db.scalars(
+        select(Activity.id).where(Activity.created_at < cutoff)
+    ).all()
+
+    if not activity_ids:
+        return 0
+
+    # 清理关联的画像来源（软引用，无外键约束）
+    db.execute(
+        delete(ProfileSource).where(
+            ProfileSource.source_type == "activity",
+            ProfileSource.source_id.in_(activity_ids),
+        )
+    )
+
+    # 清理活动记录
+    result = db.execute(
+        delete(Activity).where(Activity.id.in_(activity_ids))
+    )
+
+    commit_or_rollback(db)
+    return result.rowcount or 0
+
+
+def _cleanup_memories(db: Session, cutoff: datetime) -> int:
+    """按时间清理记忆（同时清理关联的画像来源引用）。"""
+    memory_ids = db.scalars(
+        select(Memory.id).where(Memory.created_at < cutoff)
+    ).all()
+
+    if not memory_ids:
+        return 0
+
+    # 清理画像来源中指向已删除记忆的引用（memory_id 是软引用）
+    db.execute(
+        delete(ProfileSource).where(
+            ProfileSource.source_type == "memory",
+            ProfileSource.memory_id.in_(memory_ids),
+        )
+    )
+
+    # 清理记忆（级联删除 MemorySource、MemoryRevision、MemoryReference）
+    result = db.execute(
+        delete(Memory).where(Memory.id.in_(memory_ids))
     )
 
     commit_or_rollback(db)

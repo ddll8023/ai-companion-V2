@@ -436,11 +436,26 @@ async function deleteConfig(config: ModelConfig) {
   showDeleteDialog.value = true
 }
 
+/**
+ * 密钥管理 —— 安全设计：
+ * - Electron 模式：密钥通过 IPC 由主进程管理，Renderer 只写不读
+ *   - 保存密钥：adapter.saveApiKey() → keystoreSet IPC（只写）
+ *   - 测试连接：window.electronAPI.testModelConnection() → 主进程读取密钥并注入测试请求
+ *   - 删除配置：window.electronAPI.clearModelKey() → 主进程从 keystore 删除
+ * - 浏览器模式：使用 localStorage（仅开发环境，密钥手动输入用于连接测试）
+ */
 async function confirmDelete() {
   if (!deleteTarget.value) return
   try {
-    // 通过通信适配器清理安全存储中的密钥（页面不感知获取方式）
-    await adapter.deleteApiKey(deleteTarget.value.id)
+    // 清除安全存储中的密钥（Electron 模式通过 IPC 由主进程执行）
+    const isElectron = typeof window !== 'undefined' && window.electronAPI
+    if (isElectron) {
+      await window.electronAPI!.clearModelKey(deleteTarget.value.id)
+    } else {
+      try {
+        localStorage.removeItem(`model_key_${deleteTarget.value.id}`)
+      } catch { /* ignore */ }
+    }
     // 再删除配置记录
     await modelApi.deleteConfig(deleteTarget.value.id)
     await fetchConfigs()
@@ -504,27 +519,51 @@ async function testConnection(config: ModelConfig) {
   testLoading.value = false
   testMessage.value = ''
 
-  // 通过通信适配器从安全存储获取密钥（Electron 模式）
-  if (config.has_key) {
+  const isElectron = typeof window !== 'undefined' && window.electronAPI
+
+  // Electron 模式：通过 IPC 由主进程注入密钥进行测试
+  if (isElectron && config.has_key) {
     try {
-      const apiKey = await adapter.resolveApiKey(config.id)
-      if (apiKey) {
-        await doTest(config.id, apiKey)
-        return
+      testLoading.value = true
+      testMessage.value = '测试中...'
+      const result = await window.electronAPI!.testModelConnection(config.id)
+      if (result.success) {
+        testSuccess.value = true
+        testMessage.value = '连接成功'
+        await fetchConfigs()
+      } else {
+        testSuccess.value = false
+        testMessage.value = result.message || '连接测试失败'
+        if (result.message?.includes('密钥已丢失')) {
+          // 密钥已丢失，同步更新 has_key 状态
+          await modelApi.updateConfig(config.id, { has_key: false })
+          await fetchConfigs()
+        }
       }
-      // 密钥已丢失（如用户在系统 keychain 中手动清除）
-      // 同步更新 has_key 状态
-      testMessage.value = '密钥已丢失，请重新配置密钥'
+    } catch (e: unknown) {
       testSuccess.value = false
-      await modelApi.updateConfig(config.id, { has_key: false })
-      await fetchConfigs()
-      return
-    } catch {
-      // 获取失败，回退到手动输入
+      testMessage.value = e instanceof Error ? e.message : '连接测试失败'
+    } finally {
+      testLoading.value = false
+      testingId.value = null
     }
+    return
   }
 
-  // Browser 模式或密钥不可用时，弹出输入框
+  // 浏览器模式：需要手动输入密钥才可测试
+  // 或者 Electron 模式下密钥已丢失但配置仍标记有密钥时
+  if (!isElectron && config.has_key) {
+    // 浏览器模式：从 localStorage 检查密钥（仅开发环境）
+    try {
+      const storedKey = localStorage.getItem(`model_key_${config.id}`)
+      if (storedKey) {
+        await doTest(config.id, storedKey)
+        return
+      }
+    } catch { /* ignore */ }
+  }
+
+  // 密钥不可用时，弹出输入框让用户手动输入
   testKeyDialogConfig.value = config
   testKeyInput.value = ''
   testKeyDialogVisible.value = true

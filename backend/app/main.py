@@ -36,6 +36,11 @@ async def lifespan(app: FastAPI):
     logger.info(f"数据目录: {settings.resolved_data_dir}")
     logger.info(f"数据库文件: {settings.db_file_path}")
 
+    # 验证 AUTH_TOKEN 已配置
+    if not settings.AUTH_TOKEN:
+        logger.error("AUTH_TOKEN 未配置，服务无法启动。Electron 环境由主进程自动传入。")
+        raise RuntimeError("AUTH_TOKEN 必须设置")
+
     # 初始化数据库迁移
     try:
         db = SessionLocal()
@@ -154,29 +159,29 @@ app.include_router(api_tasks.router)
 async def auth_middleware(request: Request, call_next):
     """验证请求认证令牌。
 
-    健康检查路由 /health 不要求认证（用于启动检测）。
-    当 AUTH_TOKEN 为空时跳过认证（浏览器开发模式）。
+    健康检查路由 /health 不要求认证（用于 Electron 启动检测）。
+    AUTH_TOKEN 必须设置（生产环境由 Electron 主进程生成并传入）。
+    不提供空令牌跳过认证的选项。
     """
     if request.url.path in ("/health", "/api/health", "/docs", "/openapi.json"):
         return await call_next(request)
 
-    if settings.AUTH_TOKEN:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer ") or auth_header[7:] != settings.AUTH_TOKEN:
-            return JSONResponse(
-                status_code=401,
-                content=error(code=ErrorCode.PERMISSION_DENIED, message="认证失败"),
-            )
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer ") or auth_header[7:] != settings.AUTH_TOKEN:
+        return JSONResponse(
+            status_code=401,
+            content=error(code=ErrorCode.PERMISSION_DENIED, message="认证失败"),
+        )
 
     return await call_next(request)
 
 
 def _health_data() -> dict:
-    """返回健康检查数据（供多个路由共享）。"""
-    data_dir = settings.resolved_data_dir
-    data_dir_writable = _check_dir_writable(data_dir)
-    db_file = settings.db_file_path
+    """返回健康检查数据（供多个路由共享）。
 
+    注意：不包含数据库路径、数据目录路径等敏感信息。
+    Renderer 和本地进程均不应获得内部路径。
+    """
     return {
         "status": "running",
         "service": "AI Companion",
@@ -184,11 +189,6 @@ def _health_data() -> dict:
         "database": {
             "ready": _db_ready,
             "migration_completed": _db_migration_completed,
-            "path": db_file,
-        },
-        "data_directory": {
-            "path": data_dir,
-            "writable": data_dir_writable,
         },
     }
 

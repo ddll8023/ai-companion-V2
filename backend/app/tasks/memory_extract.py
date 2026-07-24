@@ -72,7 +72,7 @@ def handle_memory_extract(payload: dict | None) -> str | None:
 
         # 从内存缓存获取 API Key（不持久化到 SQLite）
         api_key_cache_key = f"chat_{assistant_message_id}"
-        api_key = api_key_cache.pop(api_key_cache_key)
+        api_key = api_key_cache.peek(api_key_cache_key)
         if not api_key:
             logger.warning(f"记忆提取: API Key 缓存未命中, session_id={session_id}")
             return json.dumps({"extracted": 0, "error": "API Key 不可用（可能已过期）"})

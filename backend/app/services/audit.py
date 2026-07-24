@@ -45,6 +45,9 @@ def record_audit(
         result=result,
     )
     db.add(log)
+    # record_audit 内部提交审计日志。
+    # 调用方应在调用 record_audit 前确保业务数据已提交。
+    # 这种模式优先保证业务数据一致性，审计日志存在短暂窗口（极少发生）可能先于业务数据提交。
     commit_or_rollback(db)
     logger.info(f"审计记录: action={action} target_type={target_type} target_id={target_id} result={result}")
     return log

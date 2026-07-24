@@ -61,6 +61,9 @@ def get_background_db_session():
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 

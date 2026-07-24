@@ -41,9 +41,13 @@ export async function getMessages(sessionId: number) {
 
 /**
  * 发送消息并通过 SSE 接收流式回复。
- * 浏览器模式使用 fetch，Electron 模式暂不支持流式。
  *
- * @param configId 模型配置 ID，用于通过通信适配器获取 API Key
+ * 安全设计：
+ * - Electron 模式：通过专用 IPC 通道（chat:stream）发送，API Key 由主进程从 keystore
+ *   读取并注入 HTTP 请求，Renderer 不接触密钥明文
+ * - 浏览器模式：使用 fetch + SSE（密钥在请求体中，仅用于开发环境）
+ *
+ * @param configId 模型配置 ID（Electron 模式：主进程据此从 keystore 获取密钥）
  * @param signal 可选 AbortSignal，用于主动中止请求
  */
 export async function streamChat(
@@ -54,8 +58,37 @@ export async function streamChat(
   onError: (error: Error) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  // 通过通信适配器获取 API Key（页面不感知获取方式）
-  const apiKey = await adapter.resolveApiKey(configId)
+  // ── Electron 模式：通过 IPC 发送，密钥由主进程注入 ──
+  if (typeof window !== 'undefined' && window.electronAPI) {
+    try {
+      const result = await window.electronAPI.streamChat({ sessionId, content, configId })
+
+      if (result.code === 0 && result.data) {
+        // 返回完整的助手消息（包含所有 token 拼接结果）
+        if (result.data.content) {
+          onEvent({ type: 'token', content: result.data.content })
+        }
+        onEvent({ type: 'done', message_id: result.data.message_id })
+      } else if (result.code !== 0) {
+        onEvent({ type: 'error', message: result.message || '对话生成失败' })
+        onError(new Error(result.message || '对话生成失败'))
+      }
+      return
+    } catch (e) {
+      onError(e instanceof Error ? e : new Error(String(e)))
+      return
+    }
+  }
+
+  // ── 浏览器开发模式：使用 fetch + SSE ──
+  // 密钥通过请求体传递，仅用于开发环境
+  let apiKey: string | undefined
+  try {
+    // 浏览器模式：从 localStorage 读取
+    apiKey = localStorage.getItem(`model_key_${configId}`) || undefined
+  } catch {
+    // localStorage 不可用时忽略
+  }
 
   try {
     const response = await fetch(`/api/v1/chat/sessions/${sessionId}/chat`, {

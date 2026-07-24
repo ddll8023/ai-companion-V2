@@ -316,14 +316,16 @@ def run_chat_stream(
 
         # 完成：使用独立 session 持久化
         with get_background_db_session() as db:
+            # 第1步：保存完整回复（关键路径，优先提交）
             _complete_assistant_message(db, assistant_msg_id, collected_content)
 
-            # 对话完成后创建候选记忆提取后台任务（不再传入 api_key）
+        with get_background_db_session() as db:
+            # 第2步：创建候选记忆提取后台任务
             _try_create_memory_extract_task(
                 db, session_id, assistant_msg_id, collected_content,
             )
 
-            # 保存记忆引用记录（非阻塞，失败不影响对话）
+            # 第3步：保存记忆引用记录（与第2步在同一 session 中）
             if memory_context and memory_context.enabled:
                 try:
                     from app.services.memory import save_memory_references
