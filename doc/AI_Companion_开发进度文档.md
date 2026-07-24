@@ -861,17 +861,17 @@ Renderer（前端）不得获得以下内容：
 | 2 | 前端基础 | ✅ 已完成 | 2026-07-20 | 2026-07-20 | 布局/路由/状态管理/通信层、通用状态组件(加载/空/错误/确认) |
 | 3 | 最小 Electron 运行时 | ✅ 已完成 | 2026-07-20 | 2026-07-20 | Python 进程管理、安全 IPC 通信、safeStorage 密钥管理、单实例、后端状态指示灯 |
 | 4 | 模型配置 | ✅ 已完成 | 2026-07-21 | 2026-07-21 | ModelConfig 模型/CRUD/连接测试、密钥通过 Electron keystore 管理、前端设置页面、IPC PUT/DELETE 支持 |
-| 5 | 基础对话 | ✅ 已完成 | 2026-07-21 | 2026-07-21 | 会话/消息模型、CRUD、SSE 流式对话、多供应商流式调用、自动标题、前端完整对话页面 |
-| 6 | 后台任务 | ✅ 已完成 | 2026-07-21 | 2026-07-21 | BackgroundTask 模型、任务 Schema、任务 Service（创建/领取/执行/重试/超时恢复）、轮询调度器、处理器注册表、API 路由（创建/查询/取消/积压统计） |
+| 5 | 基础对话 | ✅ 已完成 | 2026-07-21 | 2026-07-21 | 会话/消息模型、CRUD、SSE 流式对话、多供应商流式调用、自动标题、前端完整对话页面、消息记忆引用加载与展示 |
+| 6 | 后台任务 | ✅ 已完成 | 2026-07-21 | 2026-07-21 | BackgroundTask 模型、任务 Schema、任务 Service（创建/领取/执行/重试/超时恢复）、ThreadPoolExecutor 异步调度器（自适应退避）、处理器注册表、API 路由（创建/查询/取消/积压统计） |
 | 7 | 记忆提取与审查 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | memories/memory_sources/memory_revisions 模型、Schema、Service(候选CRUD/确认/纠正/否定/删除/来源校验)、API路由、记忆提取后台任务处理器(注册 memory.extract 处理器，对话完成后自动创建任务，调用模型提取候选记忆)、前端完整记忆页面(状态筛选/记忆卡片/确认/纠正/否定/删除/详情弹窗/修订历史) |
 | 8 | 记忆检索与个性化上下文 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | FTS5 检索服务、多信号排序、对话上下文注入、记忆引用跟踪、FTS5 索引同步、LIKE+FTS5 组合搜索 |
 | 9 | 目标与任务 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | Goal/Task 模型/Schema/Service/API、AI 建议管理(创建/接受/拒绝)、目标进度计算、关联任务级联删除或解除关联、审计日志记录、前端完整页面(目标列表/进度条/展开任务/AI 建议标签/CRUD 对话框/删除确认) |
-| 10 | 跨平台活动采集基座 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | Activity/PrivacyRule 模型/Schema/Service/API、隐私规则引擎(全局暂停/应用黑名单/白名单/关键字/时段/脱敏/临时暂停)、活动事件批量提交/去重/脱敏、Electron 平台能力类型/权限枚举/IPC通道、前端活动记录页面(筛选/统计/删除/清空)、隐私设置页面(规则CRUD/类型提示/分类统计) |
+| 10 | 跨平台活动采集基座 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | Activity/PrivacyRule 模型/Schema/Service/API、隐私规则引擎(无配置默认阻断fail closed、全局暂停/应用黑名单/白名单/关键字/时段/脱敏/临时暂停)、活动事件批量提交/去重/脱敏、Electron 平台能力类型/权限枚举/IPC通道、前端活动记录页面(筛选/统计/删除/清空)、隐私设置页面(规则CRUD/类型提示/分类统计) |
 | 11 | macOS 活动采集适配 | ✅ 已完成 | 2026-07-22 | 2026-07-22 | macOS 活动检测模块(osascript 获取前台应用/窗口标题、ioreg 获取空闲时间)、ActivityCaptureManager(采集轮询管理/本地隐私缓存硬阻断/事件去重/批量提交)、HTTP 客户端、平台能力实时检测(Accessibility/Screen Recording 权限状态)、IPC 通道(activity-capture:start/stop/status)、Preload 暴露采集控制、前端隐私页面增加采集控制面板和权限状态展示、应用退出自动停止采集 |
 | 12 | Windows 活动采集适配 | ⏸ 已搁置 | — | — | 已确认保持 placeholder 占位状态，不开发 Windows 版本 |
-| 13 | 用户画像与行为理解 | ✅ 已完成 | 2026-07-22 | 2026-07-23 | Profile/ProfileSource/ProfileRevision 三表模型、Schema(Literal枚举约束)、Service(CRUD+状态机confirm/correct/reject/delete+behavior-stats聚合查询)、API路由7个端点+extract手动触发+行为统计独立路由、后台任务profile.extract(LLM提取+证据约束+去重+置信度上限)、activities覆盖索引(created_at,app_name)、前端UserUnderstanding页面(画像卡片+类别筛选+行为统计条形图+详情弹窗+纠正对话框)、路由/understanding+侧边栏导航。修复：API Key 改用 api_key_cache 进程缓存替代前端传参；记忆确认/纠正后自动触发画像提取；浏览器降级提示与行为统计错误展示；source_version 字段正确赋值 |
+| 13 | 用户画像与行为理解 | ✅ 已完成 | 2026-07-22 | 2026-07-23 | Profile/ProfileSource/ProfileRevision 三表模型、Schema(Literal枚举约束)、Service(CRUD+状态机confirm/correct/reject/delete+behavior-stats聚合查询)、API路由7个端点+extract手动触发+行为统计独立路由、画像提取同步化（从后台任务迁至 Service 层统一复用）；后台任务profile.extract(LLM提取+证据约束+去重+置信度上限)、activities覆盖索引(created_at,app_name)、前端UserUnderstanding页面(画像卡片+类别筛选+行为统计条形图+详情弹窗+纠正对话框)、路由/understanding+侧边栏导航。修复：API Key 改用 api_key_cache 进程缓存替代前端传参；记忆确认/纠正后自动触发画像提取；浏览器降级提示与行为统计错误展示；source_version 字段正确赋值 |
 | 14 | 完整数据治理 | ✅ 已完成 | 2026-07-23 | 2026-07-23 | 后端模型(DataExport/BackupRecord/RetentionPolicy)、Schema/Schema+Service/API(导出/备份恢复/保留策略/全量清除/数据统计)、数据量概览、保留策略管理(CRUD+自动清理)、JSON全量导出、SQLite备份恢复(含原库保护+失败回滚)、工厂重置(全表清除+索引重建)、后台任务清理处理器注册、前端完整DataManagement页面(数据量卡片/保留策略配置/一键导出/备份创建和恢复/清除全部数据+双重确认)、API路由+前端通信层+路由+导航、数据库版本v7、旧库已清理
-| 15 | 审计、系统状态与整体打磨 | ✅ 已完成 | 2026-07-23 | 2026-07-23 | 后端 system.py 服务（数据库/模型配置/FTS5/任务积压/备份/活动采集/数据目录状态聚合）、system.py API路由（系统状态+审计查询+审计统计+审计筛选）、前端 SystemStatus 页面（服务概览/数据库/数据目录/模型配置/后台任务/活动采集/备份/审计日志概览+最近记录表）、前端 system.ts API模块、路由+侧边栏导航、系统状态标记同步（main.py→system.py）、全局状态覆盖（所有页面Loading/Empty/Error+Retry） |
+| 15 | 审计、系统状态与整体打磨 | ✅ 已完成 | 2026-07-23 | 2026-07-23 | 后端 system.py 服务（数据库/模型配置/FTS5/任务积压/备份/活动采集/数据目录状态聚合）、system.py API路由（系统状态+审计查询+审计统计+审计筛选）、前端 SystemStatus 页面（服务概览/数据库/数据目录/模型配置/后台任务/活动采集/备份/审计日志概览+最近记录表）、前端 system.ts API模块、路由+侧边栏导航、系统状态标记同步（main.py→system.py）、全局状态覆盖（所有页面Loading/Empty/Error+Retry）、Dashboard 首次启动三步骤引导与待办卡片、记忆页搜索栏、IPC 前缀白名单安全加固、系统状态接口敏感信息修复 |
 
 ### 状态标记
 
