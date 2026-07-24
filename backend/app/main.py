@@ -113,7 +113,7 @@ app.add_middleware(
 async def service_exception_handler(request: Request, exc: ServiceException):
     return JSONResponse(
         status_code=200,
-        content=error(code=exc.code, message=exc.message, data=exc.data),
+        content=error(code=exc.code, message=exc.message, data=exc.data).model_dump(),
     )
 
 
@@ -122,7 +122,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"未捕获异常: {exc}", exc_info=True)
     return JSONResponse(
         status_code=200,
-        content=error(code=ErrorCode.INTERNAL_ERROR, message="服务器内部错误"),
+        content=error(code=ErrorCode.INTERNAL_ERROR, message="服务器内部错误").model_dump(),
     )
 
 
@@ -170,7 +170,9 @@ async def auth_middleware(request: Request, call_next):
     if not auth_header.startswith("Bearer ") or auth_header[7:] != settings.AUTH_TOKEN:
         return JSONResponse(
             status_code=401,
-            content=error(code=ErrorCode.PERMISSION_DENIED, message="认证失败"),
+            content=error(
+                code=ErrorCode.PERMISSION_DENIED, message="认证失败",
+            ).model_dump(),
         )
 
     return await call_next(request)
