@@ -306,13 +306,10 @@ async function initDashboard() {
     hasPendingTasks.value = pendingMemories.value > 0 || pendingTasks.value > 0
 
     // 判断是否显示首次启动引导
+    // 面板在所有步骤完成或用户手动关闭后才消失
     const dismissed = localStorage.getItem(WELCOME_DISMISSED_KEY)
-    showWelcome.value = !modelConfigured.value && dismissed !== 'true'
-
-    // 如果已配置模型，首次引导已完成
-    if (modelConfigured.value) {
-      showWelcome.value = false
-    }
+    const allCoreStepsDone = steps.modelConfigured && steps.sessionCreated
+    showWelcome.value = !allCoreStepsDone && dismissed !== 'true'
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '加载概览数据失败'
   }

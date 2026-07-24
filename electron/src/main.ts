@@ -407,32 +407,49 @@ function saveSecureStore(store: Record<string, string>): void {
 
 /** API 访问控制规则。
  *
- * read: 允许所有 GET 请求，但排除管理接口
- * write: 允许 POST/PUT 请求，排除管理接口和隐私规则修改
- * delete: 允许 DELETE 请求，排除数据文件删除
+ * blockedPaths: 按路径段前缀阻断（自动处理 URL 编码，只匹配独立路径段）。
+ * 使用 /api/v1/data/clear-all 阻断 clear-all，不误阻 clear-all?type=xxx 等参数化请求。
  */
 const API_ACCESS_RULES = {
-  /** 只读：允许全部 GET，阻断管理接口 */
+  /** 只读 GET */
   read: {
-    denylist: ['/api/v1/data/clear', '/api/v1/data/backup', '/api/v1/data/restore',
-               '/api/v1/data/exports/', '/api/v1/data/backups/',
-               '/api/v1/data/clear-all'],
+    // 阻断管理性接口
+    blockedPathPrefixes: ['/api/v1/data/clear-all', '/api/v1/data/backup', '/api/v1/data/restore'],
   },
-  /** 写入：阻断管理接口和隐私规则修改 */
+  /** 写入 POST/PUT */
   write: {
-    denylist: ['/api/v1/data/clear', '/api/v1/data/backup', '/api/v1/data/restore',
-               '/api/v1/data/clear-all',
-               '/api/v1/activities/privacy-rules'],
+    // 阻断全局数据操作和备份恢复等高危接口
+    // 不阻断单条数据修改（如 POST /api/v1/activities/privacy-rules 是合法规则创建）
+    blockedPathPrefixes: [
+      '/api/v1/data/clear-all',
+      '/api/v1/data/clear',
+      '/api/v1/data/backup',
+      '/api/v1/data/restore',
+    ],
   },
-  /** 删除：阻断导出/备份文件删除 */
+  /** 删除 DELETE */
   delete: {
-    denylist: ['/api/v1/data/exports/', '/api/v1/data/backups/'],
+    // 只阻断全局清除，允许单条导出/备份记录的删除
+    blockedPathPrefixes: ['/api/v1/data/clear-all', '/api/v1/data/clear'],
   },
 };
 
+/** 检查 URL 路径是否被允许通过 IPC 代理。
+
+ * 使用路径段前缀精确比较（而非子串匹配），避免误阻合法请求。
+ * 同时做 URL 解码防止编码绕过。
+ */
 function isApiPathAllowed(urlPath: string, accessLevel: 'read' | 'write' | 'delete'): boolean {
   const rules = API_ACCESS_RULES[accessLevel];
-  return !rules.denylist.some((blocked) => urlPath.includes(blocked));
+  // URL 解码，防止百分比编码绕过
+  const decoded = decodeURIComponent(urlPath);
+  // 规范化：去除末尾斜杠
+  const normalized = decoded.replace(/\/+$/, '');
+  // 路径段前缀检查：检查是否以任何阻断路径段开头
+  const isBlocked = rules.blockedPathPrefixes.some((prefix) => {
+    return normalized === prefix || normalized.startsWith(prefix + '/') || normalized.startsWith(prefix + '?');
+  });
+  return !isBlocked;
 }
 
 /** 静态能力定义（异步权限检测失败时的降级 fallback）。 */
@@ -600,6 +617,8 @@ function setupIpcHandlers(): void {
   // ── 活动采集 IPC 处理器 ─────────────────────────────────────────
 
   // 流式对话：Renderer 发送消息（不含密钥），主进程注入密钥后转发
+  // 注意：不直接使用 apiRequest，因为后端 SSE 端点返回 "data: {...}\n\n" 格式
+  // （非标准 JSON），需要使用原始 HTTP 请求逐段解析 SSE 事件。
   ipcMain.handle(IPC_CHANNELS.CHAT_STREAM, async (_event, data: {
     sessionId: number;
     content: string;
@@ -616,16 +635,87 @@ function setupIpcHandlers(): void {
         return { code: 4001, message: 'API Key 未配置' };
       }
 
-      // 注入密钥后向后端发送请求
-      const result = await apiRequest(
-        'POST',
-        `/api/v1/chat/sessions/${data.sessionId}/chat`,
-        {
+      // 原始 HTTP 请求：解析 SSE 格式的流式响应
+      return await new Promise<{ code: number; message: string; data?: any }>((resolve) => {
+        const body = JSON.stringify({
           content: data.content,
           api_key: apiKey,
-        },
-      );
-      return result;
+        });
+
+        const req = http.request(
+          {
+            hostname: '127.0.0.1',
+            port: backendPort,
+            path: `/api/v1/chat/sessions/${data.sessionId}/chat`,
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${authToken}`,
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(body),
+            },
+          },
+          (res: any) => {
+            let collectedContent = '';
+            let messageId: number | null = null;
+            let errorMessage: string | null = null;
+            let buffer = '';
+
+            res.on('data', (chunk: string) => {
+              buffer += chunk.toString();
+
+              // 解析 SSE 事件块：data: {...}\n\n
+              const parts = buffer.split('\n\n');
+              // 最后一段可能不完整，保留到下次
+              buffer = parts.pop() || '';
+
+              for (const part of parts) {
+                for (const line of part.split('\n')) {
+                  if (line.startsWith('data: ')) {
+                    try {
+                      const event = JSON.parse(line.slice(6));
+                      if (event.type === 'token' && event.content) {
+                        collectedContent += event.content;
+                      } else if (event.type === 'done') {
+                        messageId = event.message_id;
+                      } else if (event.type === 'error') {
+                        errorMessage = event.message || '对话生成失败';
+                      }
+                    } catch {
+                      // 跳过解析失败的单个 event
+                    }
+                  }
+                }
+              }
+            });
+
+            res.on('end', () => {
+              if (errorMessage) {
+                resolve({ code: 5001, message: errorMessage });
+              } else {
+                resolve({
+                  code: 0,
+                  message: 'ok',
+                  data: {
+                    content: collectedContent,
+                    message_id: messageId,
+                  },
+                });
+              }
+            });
+
+            res.on('error', (err: any) => {
+              resolve({ code: 5001, message: `流式响应异常: ${err.message}` });
+            });
+          },
+        );
+
+        req.on('error', (err: any) => {
+          resolve({ code: 5001, message: `本地服务不可用: ${err.message}` });
+        });
+
+        req.write(body);
+        req.end();
+      });
     } catch (e: any) {
       return { code: 5001, message: e.message || '对话生成失败' };
     }
