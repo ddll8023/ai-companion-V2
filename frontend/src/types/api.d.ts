@@ -697,6 +697,8 @@ export interface SystemStatusResponse {
     file_size_bytes: number
     fts5_ready: boolean
     fts5_index_count: number
+    vector_ready: boolean
+    vector_index_count: number
     table_counts: Record<string, number>
   }
   model_config: {

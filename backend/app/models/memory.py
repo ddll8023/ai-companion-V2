@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, func
 
 from app.core.database import Base
 
@@ -50,6 +50,9 @@ class Memory(Base):
     )
     version = Column(
         Integer, nullable=False, default=1, comment="版本号，用户纠正后递增",
+    )
+    embedding = Column(
+        LargeBinary, nullable=True, comment="嵌入向量（512 × float32，L2 归一化，BLOB 存储）",
     )
     error_message = Column(String(256), nullable=True, comment="错误信息（提取失败时记录）")
     created_at = Column(

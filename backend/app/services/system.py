@@ -51,12 +51,26 @@ def get_database_status(db: Session) -> dict[str, Any]:
         from app.models.profile import Profile
         from app.models.task import BackgroundTask
 
+        # 检查嵌入向量状态
+        vector_ready = False
+        vector_count = 0
+        try:
+            from app.models.memory import Memory
+            vector_count = db.query(Memory).filter(
+                Memory.embedding.isnot(None),
+            ).count()
+            vector_ready = True
+        except Exception:
+            vector_ready = False
+
         return {
             "status": "ok",
             "ready": True,
             "file_size_bytes": file_size_bytes,
             "fts5_ready": fts5_ready,
             "fts5_index_count": fts5_count,
+            "vector_ready": vector_ready,
+            "vector_index_count": vector_count,
             # 注意：不返回 path 字段，Renderer 不得获得数据库路径
             "table_counts": {
                 "sessions": db.query(ChatSession).count(),
@@ -81,6 +95,8 @@ def get_database_status(db: Session) -> dict[str, Any]:
             "file_size_bytes": 0,
             "fts5_ready": False,
             "fts5_index_count": 0,
+            "vector_ready": False,
+            "vector_index_count": 0,
             "table_counts": {},
         }
 

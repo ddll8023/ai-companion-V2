@@ -47,6 +47,7 @@ from app.schemas.data_governance import (
     RetentionPolicyUpdate,
 )
 from app.services.audit import record_audit
+from app.services.embedding import _ensure_model, embed_texts, serialize_embedding
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -676,10 +677,41 @@ def _rebuild_fts5(db: Session, base_metadata) -> None:
                 "WHERE status IN ('confirmed', 'corrected')"
             ))
             db.commit()
+
+            # 全量重建嵌入向量（非阻塞）
+            _rebuild_embeddings_after_reset(db)
         except Exception as fts_exc:
             logger.warning(f"恢复后 FTS5 重建失败（功能可降级）: {fts_exc}")
     except Exception as exc:
         logger.warning(f"恢复后表重建异常: {exc}")
+
+
+def _rebuild_embeddings_after_reset(db: Session):
+    """工厂重置后全量重建嵌入向量。"""
+    try:
+        if not _ensure_model():
+            logger.warning("嵌入模型不可用，跳过向量重建")
+            return
+
+        items = db.scalars(
+            select(Memory).where(
+                Memory.status.in_(["confirmed", "corrected"]),
+            )
+        ).all()
+        if not items:
+            return
+
+        texts = [item.content for item in items]
+        embeddings = embed_texts(texts)
+        updated = 0
+        for item, vec in zip(items, embeddings):
+            item.embedding = serialize_embedding(vec)
+            updated += 1
+        db.commit()
+        logger.info("嵌入向量已全量重建: %d 条", updated)
+    except Exception as exc:
+        logger.warning("嵌入向量重建失败（可降级）: %s", exc)
+        db.rollback()
 
 
 def delete_backup(db: Session, backup_id: int) -> None:

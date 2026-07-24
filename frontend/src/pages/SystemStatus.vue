@@ -309,6 +309,19 @@ onMounted(fetchData)
                 </span>
               </p>
             </div>
+
+            <div class="p-4 bg-surface rounded-lg border border-border">
+              <div class="flex items-center gap-2 text-sm">
+                <font-awesome-icon :icon="['fas', statusIcon(status.database.vector_ready)]" :class="statusColor(status.database.vector_ready)" />
+                <span>向量索引 (bge-small-zh)</span>
+              </div>
+              <p class="mt-2 text-sm font-medium text-text">
+                {{ status.database.vector_ready ? '可用' : '不可用' }}
+                <span v-if="status.database.vector_ready" class="text-text-tertiary text-xs ml-1">
+                  ({{ status.database.vector_index_count }} 条索引)
+                </span>
+              </p>
+            </div>
           </div>
         </section>
 

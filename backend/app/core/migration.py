@@ -28,9 +28,10 @@ _VERSION_TABLE = "_db_version"
 #   v5 — 添加: memories, memory_sources, memory_revisions
 #   v6 — 添加: memory_references, memories_fts (FTS5 虚拟表)
 #   v7 — 添加: data_exports, backup_records, retention_policies（数据治理模块）
+#   v8 — 添加: memories.embedding（向量嵌入 BLOB 列）
 #
 # 注意: 开发阶段版本不匹配时会清空数据重建，生产阶段需实现逐版本迁移。
-_CURRENT_VERSION: int = 7
+_CURRENT_VERSION: int = 8
 
 
 def _ensure_version_table(db: Session):
@@ -90,10 +91,52 @@ def _ensure_fts5_table(db: Session, rebuild: bool = False):
             ))
             db.commit()
             logger.info("FTS5 索引已全量重建")
+
+            # 全量重建嵌入向量（不阻塞主流程）
+            _rebuild_embeddings(db)
         else:
             logger.debug("FTS5 表已就绪（增量维护）")
     except Exception as exc:
         logger.warning(f"FTS5 表创建失败（检索功能降级）: {exc}")
+
+
+def _rebuild_embeddings(db: Session):
+    """全量重建记忆嵌入向量。
+
+    扫描所有 confirmed/corrected 状态的记忆，批量生成嵌入向量。
+    向量不可用时不阻塞（静默降级）。
+    """
+    try:
+        from sqlalchemy import select
+        from app.models.memory import Memory
+        from app.services.embedding import embed_texts, serialize_embedding, _ensure_model
+
+        if not _ensure_model():
+            logger.warning("嵌入模型不可用，跳过向量重建")
+            return
+
+        items = db.scalars(
+            select(Memory).where(
+                Memory.status.in_(["confirmed", "corrected"]),
+            )
+        ).all()
+
+        if not items:
+            return
+
+        texts = [item.content for item in items]
+        embeddings = embed_texts(texts)
+
+        updated = 0
+        for item, vec in zip(items, embeddings):
+            item.embedding = serialize_embedding(vec)
+            updated += 1
+
+        db.commit()
+        logger.info("嵌入向量已全量重建: %d 条", updated)
+    except Exception as exc:
+        logger.warning("嵌入向量重建失败（可降级，不影响基础检索）: %s", exc)
+        db.rollback()
 
 
 def ensure_schema(db: Session, base_metadata, db_file_path: str):

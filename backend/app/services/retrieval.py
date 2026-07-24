@@ -19,10 +19,16 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 
+import numpy as np
 from sqlalchemy import or_, select, text
 from sqlalchemy.orm import Session
 
 from app.schemas.retrieval import MemoryContext, RetrievedMemory
+from app.services.embedding import (
+    cosine_similarity,
+    deserialize_embedding,
+    embed_text,
+)
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -40,6 +46,17 @@ _AVG_TOKEN_PER_CHAR = 1.5
 
 # 新鲜度半衰期（天）：超过此天数的记忆新鲜度降为 50%
 _FRESHNESS_HALF_LIFE_DAYS = 30
+
+# ── 向量检索配置 ──────────────────────────────────────────────────────────
+
+# 向量检索返回的候选数（RRF 融合前各自取 Top N）
+_VECTOR_CANDIDATES = 20
+
+# 向量检索全表扫描安全上限（超出此数量时记录警告但不截断）
+_VECTOR_SCAN_LIMIT = 5000
+
+# RRF 融合常数（标准值 60）
+_RRF_K = 60
 
 # ── 公共入口函数 ────────────────────────────────────────────────────────────
 
@@ -99,6 +116,7 @@ def retrieve_memories(
             relevance_score=min(100, s["score"]),
             fts_score=s.get("fts_score", 0.0),
             freshness_score=s.get("freshness_score", 0),
+            vector_score=s.get("vector_score", None),
         )
         for m, s in selected
     ]
@@ -131,51 +149,60 @@ def _search_memories(
 ) -> list[dict[str, Any]]:
     """搜索已确认的记忆。
 
-    使用组合策略：
-    1. 英文关键词 → FTS5 前缀搜索（精确高效）
-    2. 中文内容 → SQL LIKE 搜索（FTS5 对 CJK 支持有限）
-    3. 混合内容 → 两种策略同时进行，结果合并去重
+    使用混合检索策略：
+    1. FTS5 全文搜索（英文精确匹配） → Top 20
+    2. 向量语义搜索（中文语义匹配） → Top 20
+    3. RRF 融合排序 → 合并去重结果
+    4. 中文 LIKE 搜索作为 FTS5 降级补充
 
     Args:
         db: 数据库会话
         query_text: 搜索关键词
-        limit: 最大候选数量
+        limit: 最终返回的最大候选数量
 
     Returns:
-        搜索结果列表（含 bm25_rank 信号）
+        搜索结果列表（含 fts_rank、rrf_score、vector_score 等信号字段）
     """
     if not query_text or not query_text.strip():
         return []
 
-    # 提取关键词
+    # 提取关键词（用于 FTS5 和 LIKE 降级）
     cjk_chars, eng_tokens = _extract_tokens(query_text)
 
-    results = []
-    seen_ids = set()
-
-    # 1. 英文 FTS5 搜索
+    # ── 第 1 步：FTS5 搜索 → 最多 _VECTOR_CANDIDATES 条 ──────────────
+    fts_results: list[dict[str, Any]] = []
     if eng_tokens:
         try:
-            eng_results = _search_english_fts(db, eng_tokens, limit)
-            for r in eng_results:
-                if r["id"] not in seen_ids:
-                    seen_ids.add(r["id"])
-                    results.append(r)
+            fts_results = _search_english_fts(db, eng_tokens, _VECTOR_CANDIDATES)
         except Exception as exc:
-            logger.warning(f"FTS5 英文搜索失败: {exc}")
+            logger.warning("FTS5 英文搜索失败: %s", exc)
 
-    # 2. 中文 LIKE 搜索
-    if cjk_chars:
+    # ── 第 2 步：向量语义搜索 → 最多 _VECTOR_CANDIDATES 条 ──────────────
+    vec_results: list[dict[str, Any]] = []
+    query_emb = embed_text(query_text)
+    if query_emb is not None:
+        try:
+            vec_results = _search_vector(db, query_emb, _VECTOR_CANDIDATES)
+        except Exception as exc:
+            logger.warning("向量语义搜索失败（可降级）: %s", exc)
+
+    # ── 第 3 步：RRF 融合 ────────────────────────────────────────────────
+    if vec_results:
+        merged = _rrf_merge(fts_results, vec_results, k=_RRF_K)
+    else:
+        # 向量不可用时，直接用 FTS 结果
+        merged = fts_results
+
+    # ── 第 4 步：中文 LIKE 降级补充 ──────────────────────────────────────
+    # 当 FTS5 和向量都结果不足时，用 LIKE 补充（与原有逻辑一致）
+    if not merged and cjk_chars:
         try:
             cjk_results = _search_chinese_like(db, cjk_chars, limit)
-            for r in cjk_results:
-                if r["id"] not in seen_ids:
-                    seen_ids.add(r["id"])
-                    results.append(r)
+            merged.extend(cjk_results)
         except Exception as exc:
-            logger.warning(f"LIKE 中文搜索失败: {exc}")
+            logger.warning("LIKE 中文搜索失败: %s", exc)
 
-    return results[:limit]
+    return merged[:limit]
 
 
 def _extract_tokens(
@@ -331,6 +358,131 @@ def _search_chinese_like(
     return results[:limit]
 
 
+# ── 向量搜索 ────────────────────────────────────────────────────────────────
+
+
+def _search_vector(
+    db: Session,
+    query_embedding: np.ndarray,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """向量语义搜索：余弦相似度 + Top N。
+
+    扫描数据库中所有已确认（confirmed/corrected）且有嵌入向量的记忆，
+    逐一计算余弦相似度，返回得分最高的 N 条。
+
+    该实现为精确搜索（全表扫描），适用于记忆数量处于可控范围。
+    （后续可引入 sqlite-vec 或 HNSW 近似索引加速。）
+
+    Args:
+        db: 数据库会话
+        query_embedding: 查询文本的嵌入向量（L2 归一化）
+        limit: 返回的最大条数
+
+    Returns:
+        按余弦相似度降序的搜索结果列表
+    """
+    from app.models.memory import Memory
+
+    items = db.scalars(
+        select(Memory)
+        .where(
+            Memory.status.in_(["confirmed", "corrected"]),
+            Memory.embedding.isnot(None),
+        )
+        .limit(_VECTOR_SCAN_LIMIT)
+    ).all()
+
+    scored: list[tuple[Memory, float]] = []
+    for item in items:
+        vec = deserialize_embedding(item.embedding)
+        if vec is None:
+            continue
+        sim = cosine_similarity(query_embedding, vec)
+        if sim < 0.1:
+            # 相似度过低等同于不相关，跳过以减少噪音
+            continue
+        scored.append((item, sim))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    scored = scored[:limit]
+
+    results = []
+    for item, sim in scored:
+        results.append({
+            "id": item.id,
+            "content": item.content,
+            "type": item.type,
+            "importance": item.importance,
+            "status": item.status,
+            "created_at": item.created_at,
+            "updated_at": item.updated_at,
+            "fts_rank": 0,  # 无 FTS BM25 得分，RRF 中作为底分
+            "vector_score": round(sim, 6),
+        })
+
+    logger.debug(
+        "向量检索完成: candidates=%d, vector_hits=%d, selected=%d",
+        len(items), len(scored), len(results),
+    )
+    return results
+
+
+# ── RRF 融合 ────────────────────────────────────────────────────────────────
+
+
+def _rrf_merge(
+    fts_results: list[dict[str, Any]],
+    vec_results: list[dict[str, Any]],
+    k: int = 60,
+) -> list[dict[str, Any]]:
+    """Reciprocal Rank Fusion：融合两路检索结果。
+
+    RRF 得分 = sum(1 / (k + rank))，其中 rank 从 1 开始计数。
+    属于同一记忆的结果合并，取各信号的最佳值。
+
+    Args:
+        fts_results: FTS5 搜索结果（按相关度降序）
+        vec_results: 向量搜索结果（按相似度降序）
+        k: RRF 常数，控制两路融合时的平滑程度
+
+    Returns:
+        按 RRF 得分降序排列的唯一结果列表
+    """
+    merged: dict[int, dict[str, Any]] = {}
+
+    # 融合 FTS 路
+    for rank, r in enumerate(fts_results, start=1):
+        mem_id = r["id"]
+        if mem_id not in merged:
+            entry = dict(r)
+            entry["rrf_score"] = 0.0
+            entry["vector_score"] = None  # FTS 结果无向量得分
+            merged[mem_id] = entry
+        merged[mem_id]["rrf_score"] += 1.0 / (k + rank)
+
+    # 融合向量路
+    for rank, r in enumerate(vec_results, start=1):
+        mem_id = r["id"]
+        if mem_id not in merged:
+            entry = dict(r)
+            entry["rrf_score"] = 0.0
+            entry["fts_rank"] = 0
+            merged[mem_id] = entry
+        merged[mem_id]["rrf_score"] += 1.0 / (k + rank)
+        # 保留最高向量得分（同一条记忆可能在 FTS 路也出现过）
+        vec_s = r.get("vector_score", 0) or 0
+        existing = merged[mem_id].get("vector_score", None)
+        if existing is None or vec_s > existing:
+            merged[mem_id]["vector_score"] = vec_s
+
+    # 按 RRF 得分降序
+    sorted_items = sorted(merged.values(), key=lambda x: x["rrf_score"], reverse=True)
+
+    logger.debug("RRF 融合: fts=%d, vec=%d, merged=%d", len(fts_results), len(vec_results), len(sorted_items))
+    return sorted_items
+
+
 # ── 多信号排序 ──────────────────────────────────────────────────────────────
 
 
@@ -341,13 +493,15 @@ def _multi_signal_rank(
     """多信号融合排序。
 
     三种信号：
-    1. FTS5 BM25 相关度（权重 0.5）
+    1. 检索得分（权重 0.5）— RRF 得分（混合）或 FTS5 BM25（降级）
     2. 重要性（权重 0.3）
     3. 时间新鲜度（权重 0.2）
 
+    当结果包含 rrf_score 时使用 RRF 归一化得分替代 FTS5 BM25。
+
     Args:
-        results: FTS5 搜索结果
-        query_text: 原始查询文本（未使用，为后续扩展预留）
+        results: 搜索结果列表（可能经 RRF 融合或纯 FTS5 降级）
+        query_text: 原始查询文本
 
     Returns:
         按综合得分降序排列的 (记忆对象, 信号字典) 列表
@@ -355,25 +509,31 @@ def _multi_signal_rank(
     if not results:
         return []
 
+    has_rrf = "rrf_score" in results[0]
+
     # 找出各信号的极值用于归一化
     max_importance = max((r.get("importance", 0) for r in results), default=1)
     if max_importance == 0:
         max_importance = 1
 
-    # BM25 rank 是越小越好，需要反转。FTS5 rank 为负值时表示相关度较高
-    min_rank = min(r.get("fts_rank", 0) for r in results)
-    max_rank = max(r.get("fts_rank", 0) for r in results)
-    rank_range = max_rank - min_rank if max_rank > min_rank else 1.0
+    # BM25 rank 归一化（仅用于 FTS-only 降级路径）
+    if not has_rrf:
+        min_rank = min(r.get("fts_rank", 0) for r in results)
+        max_rank = max(r.get("fts_rank", 0) for r in results)
+        rank_range = max_rank - min_rank if max_rank > min_rank else 1.0
 
-    now = datetime.now(tz=timezone.utc) if hasattr(datetime, "timezone") else datetime.now()
+    now = datetime.now(tz=timezone.utc)
 
     scored = []
     for r in results:
-        # 1. FTS5 相关度得分 (0-100)，BM25 rank 越小相关度越高
-        raw_rank = r.get("fts_rank", 0)
-        # rank 为负值表示高相关，正值表示低相关
-        # 归一化到 0-100，根据最高/最低 rank 的范围
-        rank_score = max(0, 100 * (1 - (raw_rank - min_rank) / rank_range))
+        # 1. 检索得分 (0-100)
+        if has_rrf:
+            # RRF 得分归一化：0~1/k 范围，映射到 0-100
+            raw_rrf = r.get("rrf_score", 0)
+            rank_score = min(100, raw_rrf * _RRF_K * 20)  # 经验映射因子
+        else:
+            raw_rank = r.get("fts_rank", 0)
+            rank_score = max(0, 100 * (1 - (raw_rank - min_rank) / rank_range))
 
         # 2. 重要性得分 (0-100)
         importance_score = (r.get("importance", 0) / max_importance) * 100
@@ -386,6 +546,9 @@ def _multi_signal_rank(
             rank_score * 0.5 + importance_score * 0.3 + freshness_score * 0.2
         )
 
+        # 取最大向量得分用于结果展示
+        vec_s = r.get("vector_score", None)
+
         scored.append((
             r,
             {
@@ -393,6 +556,7 @@ def _multi_signal_rank(
                 "fts_score": round(rank_score, 1),
                 "freshness_score": int(freshness_score),
                 "importance_score": int(importance_score),
+                "vector_score": vec_s,
             },
         ))
 

@@ -19,6 +19,7 @@ class RetrievedMemory(BaseModel):
     relevance_score: int = Field(0, ge=0, le=100, description="综合相关度 0-100")
     fts_score: float = Field(0.0, description="FTS5 BM25 得分")
     freshness_score: int = Field(0, ge=0, le=100, description="时间新鲜度 0-100")
+    vector_score: float | None = Field(None, description="向量余弦相似度得分 0.0-1.0")
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -33,6 +33,7 @@ from app.schemas.memory import (
 from app.schemas.task import TaskCreate
 from app.services import task as services_task
 from app.services.audit import record_audit
+from app.services.embedding import embed_text, serialize_embedding
 from app.utils.exception import ServiceException
 from app.utils.logger_config import setup_logger
 
@@ -166,8 +167,9 @@ def confirm_memory(db: Session, memory_id: int) -> MemoryResponse:
         )
 
     memory.status = "confirmed"
-    # 同步 FTS5 索引（在同一事务中，确保崩溃后一致性）
+    # 同步 FTS5 索引和嵌入向量（在同一事务中，确保崩溃后一致性）
     _sync_memory_to_fts(db, memory)
+    _sync_memory_embedding(memory)
     commit_or_rollback(db)
     logger.info(f"确认记忆: id={memory_id}")
 
@@ -217,8 +219,9 @@ def correct_memory(db: Session, memory_id: int, data: MemoryCorrect) -> MemoryRe
     if memory.status != "confirmed":
         memory.status = "confirmed"
 
-    # 同步 FTS5 索引（在同一事务中，确保崩溃后一致性）
+    # 同步 FTS5 索引和嵌入向量（在同一事务中，确保崩溃后一致性）
     _sync_memory_to_fts(db, memory)
+    _sync_memory_embedding(memory)
     commit_or_rollback(db)
     logger.info(f"纠正记忆: id={memory_id}, version={memory.version}")
 
@@ -250,8 +253,9 @@ def reject_memory(db: Session, memory_id: int) -> MemoryResponse:
         )
 
     memory.status = "rejected"
-    # 从 FTS5 索引中移除（在同一事务中，确保崩溃后一致性）
+    # 从 FTS5 索引和嵌入向量中移除
     _sync_memory_to_fts(db, memory)
+    _sync_memory_embedding(memory)
     commit_or_rollback(db)
     logger.info(f"否定记忆: id={memory_id}")
 
@@ -273,6 +277,9 @@ def delete_memory(db: Session, memory_id: int) -> None:
     关联的 sources 和 revisions 通过 CASCADE 自动清理。
     """
     memory = _get_memory_or_error(db, memory_id)
+
+    # 清理嵌入向量
+    memory.embedding = None
 
     # 先删除 FTS5 索引，后删除主表（在同一事务中，确保崩溃后一致性）
     try:
@@ -401,6 +408,35 @@ def sync_memory_to_fts(db: Session, memory_id: int) -> None:
     if memory is None:
         return
     _sync_memory_to_fts(db, memory)
+
+
+# ── 嵌入向量同步 ──────────────────────────────────────────────────────────────
+
+
+def _sync_memory_embedding(memory: Memory) -> None:
+    """同步单条记忆的嵌入向量。
+
+    仅 confirmed/corrected 状态的记忆才生成嵌入向量。
+    其他状态（rejected、deleted、candidate）清除向量。
+
+    注意：
+    - 此操作不依赖数据库事务，直接修改 memory 对象的字段
+    - 调用方需确保在 commit_or_rollback(db) 之前调用
+
+    Args:
+        memory: 记忆实体（需包含最新 content 和 status）
+    """
+    try:
+        if memory.status in ("confirmed", "corrected"):
+            vec = embed_text(memory.content)
+            memory.embedding = serialize_embedding(vec)
+        else:
+            memory.embedding = None
+    except Exception as exc:
+        logger.warning(
+            "嵌入向量同步失败（不影响主操作）: memory_id=%d, error=%s",
+            memory.id, exc,
+        )
 
 
 # ── 记忆引用跟踪 ─────────────────────────────────────────────────────────────
