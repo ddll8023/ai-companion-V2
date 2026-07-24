@@ -6,6 +6,30 @@
       <p class="mt-1 text-sm text-text-secondary">审查和管理 AI 从对话中提取的候选记忆</p>
     </div>
 
+    <!-- 搜索栏 -->
+    <div class="mb-4">
+      <div class="relative">
+        <font-awesome-icon
+          :icon="['fas', 'search']"
+          class="absolute left-3 top-1/2 -translate-y-1/2 text-text-tertiary text-sm"
+        />
+        <input
+          v-model="searchQuery"
+          type="text"
+          placeholder="搜索记忆内容..."
+          class="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg bg-bg text-text placeholder-text-tertiary focus:outline-none focus:border-primary transition-colors"
+          @input="onSearchInput"
+        />
+        <button
+          v-if="searchQuery"
+          class="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text text-sm px-1"
+          @click="clearSearch"
+        >
+          <font-awesome-icon :icon="['fas', 'times']" />
+        </button>
+      </div>
+    </div>
+
     <!-- 状态筛选标签栏 -->
     <div class="mb-4 flex items-center gap-2 flex-wrap">
       <button
@@ -350,6 +374,27 @@ const selectedStatus = ref<StatusFilter>(undefined)
 
 function switchStatus(status: StatusFilter) {
   selectedStatus.value = status
+  resetAndFetch()
+}
+
+// ── 搜索 ──
+const searchQuery = ref('')
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+
+function onSearchInput() {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    resetAndFetch()
+  }, 350) // 350ms 防抖，用户停止输入后才发起请求
+}
+
+function clearSearch() {
+  searchQuery.value = ''
+  resetAndFetch()
+}
+
+/** 重置分页并刷新 */
+function resetAndFetch() {
   page.value = 1
   memories.value = []
   fetchMemories()
@@ -433,6 +478,9 @@ async function fetchMemories() {
     if (selectedStatus.value) {
       query.status = selectedStatus.value
     }
+    if (searchQuery.value.trim()) {
+      query.keyword = searchQuery.value.trim()
+    }
     const res = await memoryApi.listMemories(query as any)
     if (page.value === 1) {
       memories.value = res.data?.lists || []
@@ -455,6 +503,9 @@ async function loadMore() {
 
 async function updateTabCounts() {
   try {
+    // 搜索时有确切的 total，无需额外请求
+    if (searchQuery.value.trim()) return
+
     // 使用 Promise.all 并行查询各状态计数，避免 N+1 串行
     const promises = statusTabs.value.map(async (tab) => {
       if (!tab.value) {

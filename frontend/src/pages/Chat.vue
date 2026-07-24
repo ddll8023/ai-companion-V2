@@ -303,6 +303,8 @@ async function handleNewSession() {
     const res = await chatApi.createSession()
     sessions.value.unshift(res.data!)
     currentSessionId.value = res.data!.id
+    // 标记已创建会话（供 Dashboard 首次启动引导使用）
+    try { localStorage.setItem('ai_companion_has_session', 'true') } catch {}
     messages.value = []
     streamingContent.value = ''
     await nextTick()
