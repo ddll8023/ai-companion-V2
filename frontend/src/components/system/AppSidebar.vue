@@ -1,7 +1,7 @@
 <template>
   <aside
     class="
-      w-60 min-h-screen flex flex-col
+      w-60 h-screen sticky top-0 self-start flex flex-col
       bg-surface border-r border-border
     "
   >
@@ -83,6 +83,6 @@ function isActive(path: string): boolean {
   if (path === '/') {
     return route.path === '/'
   }
-  return route.path.startsWith(path)
+  return route.path === path
 }
 </script>

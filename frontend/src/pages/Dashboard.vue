@@ -38,8 +38,7 @@
           </div>
           <router-link
             v-if="!steps.modelConfigured"
-            to="/settings-model"
-            class="flex-shrink-0 px-3 py-1.5 text-xs font-medium text-white bg-primary rounded-lg hover:bg-primary-dark transition-colors"
+            to="/settings"
           >
             去配置
           </router-link>
@@ -163,10 +162,10 @@
         <font-awesome-icon :icon="['fas', 'exclamation-triangle']" class="text-warning" />
         <div>
           <p class="text-sm font-medium text-text">模型未配置</p>
-          <p class="text-xs text-text-tertiary">请先到<a href="/settings-model" class="text-primary hover:underline">模型设置</a>中配置并激活一个模型，然后才能开始对话。</p>
+          <p class="text-xs text-text-tertiary">请先到<router-link to="/settings" class="text-primary hover:underline">模型设置</router-link>中配置并激活一个模型，然后才能开始对话。</p>
         </div>
         <router-link
-          to="/settings-model"
+          to="/settings"
           class="ml-auto flex-shrink-0 px-3 py-1.5 text-xs font-medium text-white bg-primary rounded-lg hover:bg-primary-dark transition-colors"
         >
           立即配置

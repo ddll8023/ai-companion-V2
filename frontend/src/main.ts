@@ -1,64 +1,12 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 
-/** FontAwesome 图标库 */
+/** FontAwesome 图标库 — 导入全部 Solid 图标 */
 import { library } from '@fortawesome/fontawesome-svg-core'
+import { fas } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome'
-import {
-  faBan,
-  faBrain,
-  faBullseye,
-  faCheck,
-  faCheckCircle,
-  faCircleExclamation,
-  faClock,
-  faCommentDots,
-  faComments,
-  faDatabase,
-  faFolder,
-  faGear,
-  faHammer,
-  faHouse,
-  faInbox,
-  faKey,
-  faMessage,
-  faPaperPlane,
-  faPen,
-  faPlug,
-  faPlus,
-  faServer,
-  faSpinner,
-  faStop,
-  faTrash,
-} from '@fortawesome/free-solid-svg-icons'
 
-library.add(
-  faBan,
-  faBrain,
-  faBullseye,
-  faCheck,
-  faCheckCircle,
-  faCircleExclamation,
-  faClock,
-  faCommentDots,
-  faComments,
-  faDatabase,
-  faFolder,
-  faGear,
-  faHammer,
-  faHouse,
-  faInbox,
-  faKey,
-  faMessage,
-  faPaperPlane,
-  faPen,
-  faPlug,
-  faPlus,
-  faServer,
-  faSpinner,
-  faStop,
-  faTrash,
-)
+library.add(fas)
 
 import App from './App.vue'
 import router from './router'
