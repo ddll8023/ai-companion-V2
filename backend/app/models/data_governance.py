@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, Column, DateTime, Integer, String, Text, func
 
+from app.core.base_model import BaseModel
 from app.core.database import Base
 
 
@@ -41,7 +42,7 @@ class DataExport(Base):
         comment="状态: completed=完成, failed=失败",
     )
     file_path = Column(String(512), nullable=True, comment="导出文件路径（导出失败时可为空）")
-    file_size_bytes = Column(Integer, nullable=True, comment="导出文件大小（字节）")
+    file_size_bytes = Column(BigInteger, nullable=True, comment="导出文件大小（字节）")
     record_count = Column(Integer, nullable=True, comment="导出记录数")
     error_message = Column(String(256), nullable=True, comment="错误信息")
     created_at = Column(
@@ -68,7 +69,7 @@ class BackupRecord(Base):
         comment="备份类型: manual=手动, auto=自动",
     )
     file_path = Column(String(512), nullable=False, comment="备份文件路径")
-    file_size_bytes = Column(Integer, nullable=True, comment="备份文件大小（字节）")
+    file_size_bytes = Column(BigInteger, nullable=True, comment="备份文件大小（字节）")
     status = Column(
         String(16),
         nullable=False,
@@ -85,7 +86,7 @@ class BackupRecord(Base):
         return f"<BackupRecord(id={self.id}, type='{self.backup_type}', status='{self.status}')>"
 
 
-class RetentionPolicy(Base):
+class RetentionPolicy(BaseModel):
     """数据保留策略表。
 
     定义各类数据的保留期限和清理规则。
@@ -111,16 +112,6 @@ class RetentionPolicy(Base):
         Boolean, nullable=False, default=True, comment="是否启用",
     )
     description = Column(String(256), nullable=True, comment="策略描述")
-    created_at = Column(
-        DateTime, server_default=func.now(), nullable=False, comment="创建时间",
-    )
-    updated_at = Column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-        comment="更新时间",
-    )
 
     def __repr__(self):
         return (

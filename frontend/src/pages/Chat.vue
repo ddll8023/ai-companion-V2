@@ -238,10 +238,13 @@ import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
 import type { Message, Session, ChatStreamEvent } from '@/types/api'
 import * as chatApi from '@/api/chat'
 import * as modelApi from '@/api/model'
+import { useAppStore } from '@/stores/app'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 
 // ── 状态 ──────────────────────────────────────────────────────────────────
+
+const appStore = useAppStore()
 
 const sessions = ref<Session[]>([])
 const currentSessionId = ref<number | null>(null)
@@ -259,6 +262,26 @@ const abortController = ref<AbortController | null>(null)
 
 const messagesContainer = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
+
+// ── 辅助函数 ──────────────────────────────────────────────────────────────
+
+function buildAssistantMessage(opts: {
+  id: number
+  content: string
+  status: 'completed' | 'aborted'
+}): Message {
+  return {
+    id: opts.id,
+    session_id: currentSessionId.value!,
+    role: 'assistant',
+    content: opts.content,
+    status: opts.status,
+    error_message: null,
+    model_name: activeConfig.value?.model_name || null,
+    token_count: null,
+    created_at: null,
+  }
+}
 
 // ── 计算属性 ──────────────────────────────────────────────────────────────
 
@@ -333,7 +356,7 @@ async function handleNewSession() {
     sessions.value.unshift(res.data!)
     currentSessionId.value = res.data!.id
     // 标记已创建会话（供 Dashboard 首次启动引导使用）
-    try { localStorage.setItem('ai_companion_has_session', 'true') } catch {}
+    try { appStore.hasSession = true } catch {}
     messages.value = []
     streamingContent.value = ''
     await nextTick()
@@ -411,17 +434,11 @@ function handleStreamEvent(event: ChatStreamEvent) {
     case 'done':
       // 完成：添加完整的助手消息
       if (streamingContent.value) {
-        const newAssistantMessage: Message = {
+        const newAssistantMessage = buildAssistantMessage({
           id: event.message_id || Date.now(),
-          session_id: currentSessionId.value!,
-          role: 'assistant',
           content: streamingContent.value,
           status: 'completed',
-          error_message: null,
-          model_name: activeConfig.value?.model_name || null,
-          token_count: null,
-          created_at: null,
-        }
+        })
         messages.value.push(newAssistantMessage)
       }
       streamingContent.value = ''
@@ -433,18 +450,11 @@ function handleStreamEvent(event: ChatStreamEvent) {
     case 'error':
       // 如果已有流式内容，作为已中止消息添加
       if (streamingContent.value) {
-        const partialMessage: Message = {
+        const partialMessage = buildAssistantMessage({
           id: Date.now(),
-          session_id: currentSessionId.value!,
-          role: 'assistant',
           content: streamingContent.value,
           status: 'aborted',
-          error_message: null,
-          model_name: activeConfig.value?.model_name || null,
-          token_count: null,
-          created_at: null,
-        }
-        messages.value.push(partialMessage)
+        })
       } else {
         // 无内容时显示错误
         const errorMsg = event.message || '生成失败'
@@ -474,17 +484,11 @@ function handleStop() {
 
   // 已有流式内容作为已中止消息保留
   if (streamingContent.value) {
-    const partialMessage: Message = {
+    const partialMessage = buildAssistantMessage({
       id: Date.now(),
-      session_id: currentSessionId.value!,
-      role: 'assistant',
       content: streamingContent.value,
       status: 'aborted',
-      error_message: null,
-      model_name: activeConfig.value?.model_name || null,
-      token_count: null,
-      created_at: null,
-    }
+    })
     messages.value.push(partialMessage)
   }
   streamingContent.value = ''

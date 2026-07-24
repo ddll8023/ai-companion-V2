@@ -28,6 +28,7 @@ import {
   PermissionNames,
   PermissionState,
 } from './constants/platform';
+import { getBaseCapabilities } from './constants/capabilities';
 import {
   getActivityCaptureManager,
 } from './services/activityCapture';
@@ -496,46 +497,7 @@ function isApiPathAllowed(urlPath: string, accessLevel: 'read' | 'write' | 'dele
 
 /** 静态能力定义（异步权限检测失败时的降级 fallback）。 */
 function getStaticCapabilities(): PermissionState[] {
-  const platform = getPlatform();
-
-  return [
-    {
-      name: PermissionNames.ACTIVITY_CAPTURE,
-      status: platform === 'macos' ? PermissionStatus.AVAILABLE : PermissionStatus.NOT_IMPLEMENTED,
-      label: '活动采集',
-      description: '采集前台应用和窗口信息',
-    },
-    {
-      name: PermissionNames.ACCESSIBILITY,
-      status: platform === 'macos' ? PermissionStatus.PENDING_AUTH : PermissionStatus.NOT_IMPLEMENTED,
-      label: '辅助功能',
-      description: '获取前台应用和窗口标题',
-    },
-    {
-      name: PermissionNames.INPUT_MONITORING,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '输入监控',
-      description: '监控键盘输入事件',
-    },
-    {
-      name: PermissionNames.SCREEN_RECORDING,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '屏幕录制',
-      description: '屏幕截图和录制',
-    },
-    {
-      name: PermissionNames.NOTIFICATION,
-      status: PermissionStatus.AVAILABLE,
-      label: '系统通知',
-      description: '发送桌面通知',
-    },
-    {
-      name: PermissionNames.AUTOMATION,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '自动化',
-      description: '控制其他应用',
-    },
-  ];
+  return getBaseCapabilities();
 }
 
 function setupIpcHandlers(): void {
@@ -659,109 +621,119 @@ function setupIpcHandlers(): void {
   // ── 活动采集 IPC 处理器 ─────────────────────────────────────────
 
   // 流式对话：Renderer 发送消息（不含密钥），主进程注入密钥后转发
-  // 注意：不直接使用 apiRequest，因为后端 SSE 端点返回 "data: {...}\n\n" 格式
-  // （非标准 JSON），需要使用原始 HTTP 请求逐段解析 SSE 事件。
-  ipcMain.handle(IPC_CHANNELS.CHAT_STREAM, async (_event, data: {
+  // 使用 IPC on+send 模式：逐 token 推送，而非一次性返回
+  ipcMain.on(IPC_CHANNELS.CHAT_STREAM, (event, data: {
     sessionId: number;
     content: string;
     configId: number;
   }) => {
     if (!backendPort || !isBackendReady) {
-      return { code: 5001, message: '本地服务尚未就绪' };
+      event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+        type: 'error', message: '本地服务尚未就绪',
+      });
+      return;
     }
-    try {
-      // 从 keystore 读取 API Key（主进程内部操作，密钥不进入 Renderer）
-      const store = loadSecureStore();
-      const apiKey = store[`model_key_${data.configId}`];
-      if (!apiKey) {
-        return { code: 4001, message: 'API Key 未配置' };
-      }
+    // 异步流式处理（不阻塞 IPC handler 返回）
+    handleStreamChat(event, data).catch((err: any) => {
+      event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+        type: 'error', message: err.message || '对话生成失败',
+      });
+    });
+  });
 
-      // 原始 HTTP 请求：解析 SSE 格式的流式响应
-      return await new Promise<{ code: number; message: string; data?: any }>((resolve) => {
-        const body = JSON.stringify({
-          content: data.content,
-          api_key: apiKey,
-        });
+  /**
+   * 流式对话的核心处理逻辑：从 keystore 读取 Key → 请求后端 SSE → 逐 token 推送。
+   */
+  async function handleStreamChat(
+    event: Electron.IpcMainEvent,
+    data: { sessionId: number; content: string; configId: number },
+  ) {
+    const store = loadSecureStore();
+    const apiKey = store[`model_key_${data.configId}`];
+    if (!apiKey) {
+      event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+        type: 'error', message: 'API Key 未配置',
+      });
+      return;
+    }
 
-        const req = http.request(
-          {
-            hostname: '127.0.0.1',
-            port: backendPort,
-            path: `/api/v1/chat/sessions/${data.sessionId}/chat`,
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${authToken}`,
-              'Content-Type': 'application/json',
-              'Content-Length': Buffer.byteLength(body),
-            },
-          },
-          (res: any) => {
-            let collectedContent = '';
-            let messageId: number | null = null;
-            let errorMessage: string | null = null;
-            let buffer = '';
+    const body = JSON.stringify({
+      content: data.content,
+      api_key: apiKey,
+    });
 
-            res.on('data', (chunk: string) => {
-              buffer += chunk.toString();
+    const req = http.request(
+      {
+        hostname: '127.0.0.1',
+        port: backendPort,
+        path: `/api/v1/chat/sessions/${data.sessionId}/chat`,
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${authToken}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      },
+      (res: any) => {
+        let buffer = '';
+        let collectedContent = '';
 
-              // 解析 SSE 事件块：data: {...}\n\n
-              const parts = buffer.split('\n\n');
-              // 最后一段可能不完整，保留到下次
-              buffer = parts.pop() || '';
+        res.on('data', (chunk: string) => {
+          buffer += chunk.toString();
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
 
-              for (const part of parts) {
-                for (const line of part.split('\n')) {
-                  if (line.startsWith('data: ')) {
-                    try {
-                      const event = JSON.parse(line.slice(6));
-                      if (event.type === 'token' && event.content) {
-                        collectedContent += event.content;
-                      } else if (event.type === 'done') {
-                        messageId = event.message_id;
-                      } else if (event.type === 'error') {
-                        errorMessage = event.message || '对话生成失败';
-                      }
-                    } catch {
-                      // 跳过解析失败的单个 event
-                    }
+          for (const part of parts) {
+            for (const line of part.split('\n')) {
+              if (line.startsWith('data: ')) {
+                try {
+                  const eventData = JSON.parse(line.slice(6));
+                  if (eventData.type === 'token' && eventData.content) {
+                    collectedContent += eventData.content;
+                    event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+                      type: 'token', content: eventData.content,
+                    });
+                  } else if (eventData.type === 'done') {
+                    event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+                      type: 'done', message_id: eventData.message_id,
+                    });
+                  } else if (eventData.type === 'error') {
+                    event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+                      type: 'error', message: eventData.message || '对话生成失败',
+                    });
                   }
+                } catch {
+                  // 跳过解析失败的单个 event
                 }
               }
-            });
-
-            res.on('end', () => {
-              if (errorMessage) {
-                resolve({ code: 5001, message: errorMessage });
-              } else {
-                resolve({
-                  code: 0,
-                  message: 'ok',
-                  data: {
-                    content: collectedContent,
-                    message_id: messageId,
-                  },
-                });
-              }
-            });
-
-            res.on('error', (err: any) => {
-              resolve({ code: 5001, message: `流式响应异常: ${err.message}` });
-            });
-          },
-        );
-
-        req.on('error', (err: any) => {
-          resolve({ code: 5001, message: `本地服务不可用: ${err.message}` });
+            }
+          }
         });
 
-        req.write(body);
-        req.end();
+        res.on('end', () => {
+          // 如果连接结束但没有收到 done/error 事件，补充一个 done
+          event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+            type: 'done', message_id: null,
+          });
+        });
+
+        res.on('error', (err: any) => {
+          event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+            type: 'error', message: `流式响应异常: ${err.message}`,
+          });
+        });
+      },
+    );
+
+    req.on('error', (err: any) => {
+      event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+        type: 'error', message: `本地服务不可用: ${err.message}`,
       });
-    } catch (e: any) {
-      return { code: 5001, message: e.message || '对话生成失败' };
-    }
-  });
+    });
+
+    req.write(body);
+    req.end();
+  }
 
   // 模型连接测试：Renderer 发送 configId（不含密钥），主进程注入密钥后测试
   ipcMain.handle(IPC_CHANNELS.MODEL_TEST, async (_event, configId: number) => {

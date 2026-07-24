@@ -16,11 +16,51 @@ from app.utils.logger_config import setup_logger
 logger = setup_logger(__name__)
 
 
+def get_audit_stats(db: Session) -> dict:
+    """获取审计统计概览（从路由层移至 service 层）。"""
+    total = db.scalar(select(func.count()).select_from(AuditLog)) or 0
+    success_count = db.scalar(
+        select(func.count()).select_from(AuditLog).where(AuditLog.result == 0)
+    ) or 0
+
+    rows = db.execute(
+        select(AuditLog.action, func.count().label("count"))
+        .group_by(AuditLog.action)
+        .order_by(func.count().desc())
+    ).all()
+
+    return {
+        "total": total,
+        "success": success_count,
+        "fail": total - success_count,
+        "by_action": [{"action": row.action, "count": row.count} for row in rows],
+    }
+
+
+def get_audit_actions(db: Session) -> list[str]:
+    """获取所有操作类型。"""
+    rows = db.execute(
+        select(AuditLog.action).distinct().order_by(AuditLog.action)
+    ).scalars().all()
+    return list(rows)
+
+
+def get_audit_target_types(db: Session) -> list[str]:
+    """获取所有对象类型。"""
+    rows = db.execute(
+        select(AuditLog.target_type).distinct().order_by(AuditLog.target_type)
+    ).scalars().all()
+    return [r for r in rows if r is not None]
+
+
 def record_audit(
     db: Session,
     action: str,
     target_type: str | None = None,
     target_id: int | None = None,
+    actor_id: int | None = None,
+    actor_name: str | None = None,
+    ip_address: str | None = None,
     summary: str | None = None,
     detail: str | None = None,
     result: int = 0,
@@ -32,6 +72,9 @@ def record_audit(
         action: 操作类型
         target_type: 操作对象类型
         target_id: 操作对象 ID
+        actor_id: 操作用户 ID
+        actor_name: 操作用户名称
+        ip_address: 客户端 IP 地址
         summary: 操作摘要（不含敏感正文）
         detail: 补充信息（JSON 字符串，不含敏感正文）
         result: 操作结果，0=成功，1=失败
@@ -40,6 +83,9 @@ def record_audit(
         action=action,
         target_type=target_type,
         target_id=target_id,
+        actor_id=actor_id,
+        actor_name=actor_name,
+        ip_address=ip_address,
         summary=summary,
         detail=detail,
         result=result,

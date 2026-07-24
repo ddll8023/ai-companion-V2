@@ -399,148 +399,190 @@ def sync_extract_profiles(
         dict: 包含 extracted（提取数）和 skipped（重复跳过数）或 error 字段
     """
     try:
-        from app.models.memory import Memory
-        from app.schemas.profile import PROFILE_CATEGORIES, ProfileCreate
-        from app.services import model_provider
+        # 1. 获取模型配置和记忆数据
+        memories_data = _load_memories_for_extraction(db, memory_ids)
+        if not isinstance(memories_data, dict):
+            memories, source_version = memories_data
+        else:
+            return memories_data  # dict 即错误响应
 
-        # 1. 获取激活的模型配置
-        active_config = model_provider.get_active_config(db)
-        if active_config is None:
-            return {"extracted": 0, "error": "无激活的模型配置"}
-
-        # 2. 获取已确认记忆
-        stmt = select(Memory).where(
-            Memory.status.in_(["confirmed", "corrected"]),
-        )
-        if memory_ids:
-            stmt = stmt.where(Memory.id.in_(memory_ids))
-        memories = list(
-            db.scalars(
-                stmt.order_by(desc(Memory.importance), desc(Memory.id))
-                .limit(50)
-            ).all()
-        )
-        if not memories:
-            return {"extracted": 0, "reason": "无可用的已确认记忆"}
-
-        # 3. 格式化记忆文本
-        parts = []
-        for mem in memories:
-            parts.append(
-                f"[类型: {mem.type} | 重要性: {mem.importance}]\n{mem.content}",
-            )
-        memories_text = "\n\n---\n\n".join(parts)
-        memory_ids_sorted = sorted([m.id for m in memories])
-        source_version = (
-            f"memories_{'_'.join(str(i) for i in memory_ids_sorted[:20])}"
-        )
-
-        # 4. 调用模型
-        _PROFILE_EXTRACT_SYSTEM_PROMPT = (
-            "你是用户画像分析助手。请阅读以下「用户已确认的记忆」列表，"
-            "从中提取用户的人物画像特征。\n\n"
-            "提取要求：\n"
-            "1. 只从给定的记忆内容中推断，禁止添加记忆未包含的信息\n"
-            "2. 提取稳定的、对长期理解用户有帮助的特征\n"
-            "3. 每条特征必须附带「evidence」（直接对应记忆原文）作为证据\n"
-            "4. 避免过度泛化：单条临时情绪不构成习惯或偏好\n"
-            "5. 用简洁明确的中文描述画像内容\n"
-            "6. 如果没有可提取的画像特征，返回空列表\n\n"
-            "可选类别：\n"
-            "- communication_preference（沟通偏好：语气、格式、风格等）\n"
-            "- work_habit（工作习惯：工作方式、工具偏好、时间安排等）\n"
-            "- learning_preference（学习偏好：学习方式、知识领域等）\n"
-            "- interest（兴趣方向：关注的话题、娱乐、爱好等）\n"
-            "- decision_preference（决策偏好：选择倾向、权衡方式等）\n"
-            "- time_habit（时间习惯：活跃时段、作息等）\n"
-            "- long_term_goal（长期目标：事业、学习、生活目标等）\n"
-            "- work_pattern（使用模式：常用应用、工作流程等）\n"
-            "- other（其他无法归类的稳定特征）\n\n"
-            "请以 JSON 格式返回，格式为：\n"
-            '{"profiles": [{"category": "...", "content": "...", '
-            '"confidence": 80, "evidence": "记忆原文..."}]}\n\n'
-            "置信度规则：\n"
-            "- 有 2 条以上独立记忆支持同一结论 → 60～80\n"
-            "- 只有 1 条记忆支持 → 最高 50\n"
-            "- 直觉推断但无直接记忆支持 → 最高 30\n"
-            "- 超过 80 的置信度必须有至少 3 条独立记忆交叉支持\n\n"
-            "只返回 JSON，不要包含其他说明文字。"
-        )
-
-        result_text = model_provider.chat_sync(
-            provider=active_config.provider,
-            model_name=active_config.model_name,
-            api_key=api_key,
-            api_base=active_config.api_base,
-            system_prompt=_PROFILE_EXTRACT_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": memories_text}],
-        )
-
+        # 2. 组装 prompt 并调用模型
+        result_text = _call_llm_for_extraction(db, api_key, memories, source_version)
+        if result_text is None:
+            return {"extracted": 0, "reason": "无激活的模型配置"}
         if not result_text:
             return {"extracted": 0, "reason": "模型返回为空"}
 
-        # 5. 解析 JSON
+        # 3. 解析结果
         parsed = _parse_extraction_result(result_text)
         if parsed is None:
             return {"extracted": 0, "error": "模型返回格式异常"}
-
         profiles_data = parsed.get("profiles", [])
         if not profiles_data:
             return {"extracted": 0, "reason": "未提取到有效画像"}
 
-        # 6. 保存候选画像（含去重）
-        extracted_count = 0
-        skipped_count = 0
-
-        for prof in profiles_data:
-            category = prof.get("category", "other")
-            content = (prof.get("content", "") or "").strip()
-            confidence = prof.get("confidence", 50)
-            evidence = (prof.get("evidence", "") or "").strip()
-
-            # 校验类别
-            if category not in PROFILE_CATEGORIES:
-                category = "other"
-
-            # 校验内容
-            if not content or len(content) < 5:
-                continue
-
-            # 限制置信度
-            confidence = min(max(confidence, 0), 60)
-            if evidence and len(evidence) > 10:
-                confidence = min(max(confidence, 0), 80)
-
-            # 去重
-            if check_duplicate_profile(db, category, content):
-                skipped_count += 1
-                continue
-
-            create_data = ProfileCreate(
-                category=category,
-                content=content,
-                confidence=confidence,
-                is_auto_extracted=1,
-                source_version=source_version,
-                memory_ids=[],
-                evidence_texts=[evidence] if evidence else [],
-            )
-
-            try:
-                create_candidate_profile(db, create_data)
-                extracted_count += 1
-            except Exception as exc:
-                logger.warning(f"保存候选画像失败: {exc}")
-                continue
-
-        logger.info(
-            f"画像提取完成: 提取 {extracted_count} 条, 跳过 {skipped_count} 条重复",
+        # 4. 保存候选画像（含去重）
+        extracted, skipped = _save_extracted_profiles(
+            db, profiles_data, source_version,
         )
-        return {"extracted": extracted_count, "skipped": skipped_count}
+        logger.info(
+            f"画像提取完成: 提取 {extracted} 条, 跳过 {skipped} 条重复",
+        )
+        return {"extracted": extracted, "skipped": skipped}
 
     except Exception as exc:
         logger.error(f"画像提取模型调用异常: {exc}", exc_info=True)
         return {"extracted": 0, "error": str(exc)[:200]}
+
+
+def _load_memories_for_extraction(
+    db: Session, memory_ids: list[int] | None,
+) -> tuple[list, str] | dict:
+    """加载并格式化用于画像提取的记忆。返回 (memories列表, source_version) 或错误 dict。"""
+    from app.models.memory import Memory
+    from app.services import model_provider
+
+    if not model_provider.get_active_config(db):
+        return {"extracted": 0, "error": "无激活的模型配置"}
+
+    stmt = select(Memory).where(
+        Memory.status.in_(["confirmed", "corrected"]),
+    )
+    if memory_ids:
+        stmt = stmt.where(Memory.id.in_(memory_ids))
+    memories = list(
+        db.scalars(
+            stmt.order_by(desc(Memory.importance), desc(Memory.id))
+            .limit(50)
+        ).all()
+    )
+    if not memories:
+        return {"extracted": 0, "reason": "无可用的已确认记忆"}
+
+    memory_ids_sorted = sorted([m.id for m in memories])
+    source_version = (
+        f"memories_{'_'.join(str(i) for i in memory_ids_sorted[:20])}"
+    )
+    return memories, source_version
+
+
+def _call_llm_for_extraction(
+    db: Session, api_key: str,
+    memories: list, source_version: str,
+) -> str | None:
+    """组装 prompt 并调用 LLM 进行画像提取。"""
+    from app.schemas.profile import PROFILE_CATEGORIES
+    from app.services import model_provider
+
+    # 获取激活配置
+    active_config = model_provider.get_active_config(db)
+    if active_config is None:
+        return None
+
+    # 格式化记忆文本
+    parts = []
+    for mem in memories:
+        parts.append(
+            f"[类型: {mem.type} | 重要性: {mem.importance}]\n{mem.content}",
+        )
+    memories_text = "\n\n---\n\n".join(parts)
+
+    system_prompt = _build_extraction_system_prompt()
+    return model_provider.chat_sync(
+        provider=active_config.provider,
+        model_name=active_config.model_name,
+        api_key=api_key,
+        api_base=active_config.api_base,
+        system_prompt=system_prompt,
+        messages=[{"role": "user", "content": memories_text}],
+    )
+
+
+def _build_extraction_system_prompt() -> str:
+    """构造画像提取的系统提示词。"""
+    return (
+        "你是用户画像分析助手。请阅读以下「用户已确认的记忆」列表，"
+        "从中提取用户的人物画像特征。\n\n"
+        "提取要求：\n"
+        "1. 只从给定的记忆内容中推断，禁止添加记忆未包含的信息\n"
+        "2. 提取稳定的、对长期理解用户有帮助的特征\n"
+        "3. 每条特征必须附带「evidence」（直接对应记忆原文）作为证据\n"
+        "4. 避免过度泛化：单条临时情绪不构成习惯或偏好\n"
+        "5. 用简洁明确的中文描述画像内容\n"
+        "6. 如果没有可提取的画像特征，返回空列表\n\n"
+        "可选类别：\n"
+        "- communication_preference（沟通偏好：语气、格式、风格等）\n"
+        "- work_habit（工作习惯：工作方式、工具偏好、时间安排等）\n"
+        "- learning_preference（学习偏好：学习方式、知识领域等）\n"
+        "- interest（兴趣方向：关注的话题、娱乐、爱好等）\n"
+        "- decision_preference（决策倾向：选择倾向、权衡方式等）\n"
+        "- time_habit（时间习惯：活跃时段、作息等）\n"
+        "- long_term_goal（长期目标：事业、学习、生活目标等）\n"
+        "- work_pattern（使用模式：常用应用、工作流程等）\n"
+        "- other（其他无法归类的稳定特征）\n\n"
+        "请以 JSON 格式返回，格式为：\n"
+        '{"profiles": [{"category": "...", "content": "...", '
+        '"confidence": 80, "evidence": "记忆原文..."}]}\n\n'
+        "置信度规则：\n"
+        "- 有 2 条以上独立记忆支持同一结论 → 60～80\n"
+        "- 只有 1 条记忆支持 → 最高 50\n"
+        "- 直觉推断但无直接记忆支持 → 最高 30\n"
+        "- 超过 80 的置信度必须有至少 3 条独立记忆交叉支持\n\n"
+        "只返回 JSON，不要包含其他说明文字。"
+    )
+
+
+def _save_extracted_profiles(
+    db: Session,
+    profiles_data: list[dict],
+    source_version: str,
+) -> tuple[int, int]:
+    """保存提取到的画像，含去重和校验。返回 (extracted, skipped)。"""
+    from app.schemas.profile import PROFILE_CATEGORIES, ProfileCreate
+
+    extracted_count = 0
+    skipped_count = 0
+
+    for prof in profiles_data:
+        category = prof.get("category", "other")
+        content = (prof.get("content", "") or "").strip()
+        confidence = prof.get("confidence", 50)
+        evidence = (prof.get("evidence", "") or "").strip()
+
+        # 校验类别
+        if category not in PROFILE_CATEGORIES:
+            category = "other"
+
+        # 校验内容
+        if not content or len(content) < 5:
+            continue
+
+        # 限制置信度（有证据最高 80，否则最高 60）
+        confidence = min(max(confidence, 0), 80 if (evidence and len(evidence) > 10) else 60)
+
+        # 去重
+        if check_duplicate_profile(db, category, content):
+            skipped_count += 1
+            continue
+
+        create_data = ProfileCreate(
+            category=category,
+            content=content,
+            confidence=confidence,
+            is_auto_extracted=1,
+            source_version=source_version,
+            memory_ids=[],
+            evidence_texts=[evidence] if evidence else [],
+        )
+
+        try:
+            create_candidate_profile(db, create_data)
+            extracted_count += 1
+        except Exception as exc:
+            logger.warning(f"保存候选画像失败: {exc}")
+            continue
+
+    return extracted_count, skipped_count
 
 
 def _parse_extraction_result(text: str) -> dict | None:

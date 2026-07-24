@@ -6,10 +6,10 @@ from datetime import datetime
 
 from sqlalchemy import Column, DateTime, Integer, String, Text, func
 
-from app.core.database import Base
+from app.core.base_model import BaseModel
 
 
-class BackgroundTask(Base):
+class BackgroundTask(BaseModel):
     """后台任务表。"""
 
     __tablename__ = "background_tasks"
@@ -36,10 +36,6 @@ class BackgroundTask(Base):
     )
     started_at = Column(DateTime, nullable=True, comment="开始执行时间")
     completed_at = Column(DateTime, nullable=True, comment="完成时间")
-    created_at = Column(DateTime, server_default=func.now(), nullable=False, comment="创建时间")
-    updated_at = Column(
-        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False, comment="更新时间",
-    )
 
     def __repr__(self):
         return f"<BackgroundTask(id={self.id}, type='{self.task_type}', status='{self.status}')>"

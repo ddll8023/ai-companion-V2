@@ -7,12 +7,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, func
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text, func
 
+from app.core.base_model import BaseModel
 from app.core.database import Base
 
 
-class Memory(Base):
+class Memory(BaseModel):
     """记忆表。"""
 
     __tablename__ = "memories"
@@ -55,15 +56,11 @@ class Memory(Base):
         LargeBinary, nullable=True, comment="嵌入向量（512 × float32，L2 归一化，BLOB 存储）",
     )
     error_message = Column(String(256), nullable=True, comment="错误信息（提取失败时记录）")
-    created_at = Column(
-        DateTime, server_default=func.now(), nullable=False, comment="创建时间",
-    )
-    updated_at = Column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-        comment="更新时间",
+
+    __table_args__ = (
+        CheckConstraint("importance >= 0 AND importance <= 10", name="ck_memory_importance"),
+        CheckConstraint("status IN ('candidate', 'confirmed', 'corrected', 'rejected', 'deleted')", name="ck_memory_status"),
+        CheckConstraint("type IN ('fact', 'preference', 'event', 'goal', 'habit')", name="ck_memory_type"),
     )
 
     def __repr__(self):

@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     # CORS 配置（JSON 数组字符串）
     CORS_ORIGINS: str = '["http://127.0.0.1:9753","http://localhost:9753"]'
 
+    # 默认系统提示词（对话时使用，可被模型配置覆盖）
+    SYSTEM_PROMPT: str = (
+        "你是一个有用的 AI 助手。请使用中文回复用户，除非用户使用其他语言提问。"
+    )
+
     @property
     def cors_origins(self) -> list[str]:
         try:

@@ -39,17 +39,6 @@ from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
-# 隐私规则优先级排序（数值越高越优先判断）
-_RULE_PRIORITY_ORDER = {
-    "global_pause": 100,
-    "app_blacklist": 80,
-    "app_whitelist": 75,
-    "title_keyword": 70,
-    "time_based": 60,
-    "content_masking": 50,
-    "temp_pause": 90,
-}
-
 
 # ── 活动事件处理 ────────────────────────────────────────────────────────────────
 

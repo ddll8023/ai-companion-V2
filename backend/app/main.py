@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.core.app_state import app_state
 from app.core.config import settings
 from app.core.database import Base, SessionLocal
 from app.core.migration import ensure_schema
@@ -19,19 +19,10 @@ from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
-# 标记数据库状态
-_db_ready = False
-_db_migration_completed = False
-
-# 后台任务调度器
-_task_scheduler: object | None = None
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理。"""
-    global _db_ready, _db_migration_completed, _task_scheduler
-
     logger.info("服务启动中...")
     logger.info(f"数据目录: {settings.resolved_data_dir}")
     logger.info(f"数据库文件: {settings.db_file_path}")
@@ -49,45 +40,41 @@ async def lifespan(app: FastAPI):
             base_metadata=Base.metadata,
             db_file_path=settings.db_file_path,
         )
-        _db_ready = db_ready
-        _db_migration_completed = db_ready
+        app_state.db_ready = db_ready
+        app_state.db_migration_completed = db_ready
         db.close()
-
-        # 同步系统状态标记
-        from app.api.system import set_db_ready, set_db_migration_completed
-        set_db_ready(_db_ready)
-        set_db_migration_completed(_db_migration_completed)
     except Exception as exc:
-        _db_ready = False
-        _db_migration_completed = False
+        app_state.db_ready = False
+        app_state.db_migration_completed = False
         logger.error(f"数据库初始化失败: {exc}", exc_info=True)
         logger.warning("服务将以数据库不可用状态启动")
 
     # 数据库就绪后启动后台任务调度器
-    if _db_ready:
+    if app_state.db_ready:
         try:
             from app.tasks import memory_extract  # 注册记忆提取任务处理器
             from app.tasks import profile_extract  # 注册画像提取任务处理器
             from app.tasks.scheduler import TaskScheduler
-            _task_scheduler = TaskScheduler(poll_interval=2.0, recovery_interval=60.0)
-            _task_scheduler.start()
+            app_state.task_scheduler = TaskScheduler(poll_interval=2.0, recovery_interval=60.0)
+            app_state.task_scheduler.start()
         except Exception as exc:
-            _task_scheduler = None
+            app_state.task_scheduler = None
             logger.error(f"后台任务调度器启动失败: {exc}", exc_info=True)
             logger.warning("服务将在无后台任务调度器的情况下运行")
 
     yield
 
     # 停止调度器
-    if _task_scheduler is not None:
+    scheduler = app_state.task_scheduler
+    if scheduler is not None:
         try:
-            _task_scheduler.stop()
+            scheduler.stop()
         except Exception as exc:
             logger.error(f"后台任务调度器停止异常: {exc}", exc_info=True)
-        _task_scheduler = None
+        app_state.task_scheduler = None
 
-    _db_ready = False
-    _db_migration_completed = False
+    app_state.db_ready = False
+    app_state.db_migration_completed = False
     logger.info("服务关闭")
 
 
@@ -189,8 +176,8 @@ def _health_data() -> dict:
         "service": "AI Companion",
         "version": settings.APP_VERSION,
         "database": {
-            "ready": _db_ready,
-            "migration_completed": _db_migration_completed,
+            "ready": app_state.db_ready,
+            "migration_completed": app_state.db_migration_completed,
         },
     }
 
@@ -205,19 +192,6 @@ async def health():
 async def api_health():
     """健康检查（前端 /api 代理用，与业务路由前缀一致）。"""
     return success(data=_health_data())
-
-
-def _check_dir_writable(dir_path: str) -> bool:
-    """检查目录是否可写。"""
-    try:
-        os.makedirs(dir_path, exist_ok=True)
-        test_file = os.path.join(dir_path, ".write_test")
-        with open(test_file, "w") as f:
-            f.write("")
-        os.unlink(test_file)
-        return True
-    except Exception:
-        return False
 
 
 if __name__ == "__main__":

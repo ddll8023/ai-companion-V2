@@ -899,19 +899,19 @@ def _cleanup_target_type(db: Session, target_type: str, cutoff: datetime) -> int
         删除的记录数
     """
     cleanup_map = {
-        "activities": _cleanup_activities(db, cutoff),
-        "messages": _cleanup_messages(db, cutoff),
-        "memories": _cleanup_memories(db, cutoff),
-        "profiles": _cleanup_model_by_time(db, Profile, cutoff),
-        "audit_logs": _cleanup_model_by_time(db, AuditLog, cutoff),
-        "backups": _cleanup_backups_by_time(db, cutoff),
-        "background_tasks": _cleanup_model_by_time(db, BackgroundTask, cutoff),
-        "model_configs": _cleanup_model_by_time(db, ModelConfig, cutoff),
+        "activities": lambda: _cleanup_activities(db, cutoff),
+        "messages": lambda: _cleanup_messages(db, cutoff),
+        "memories": lambda: _cleanup_memories(db, cutoff),
+        "profiles": lambda: _cleanup_model_by_time(db, Profile, cutoff),
+        "audit_logs": lambda: _cleanup_model_by_time(db, AuditLog, cutoff),
+        "backups": lambda: _cleanup_backups_by_time(db, cutoff),
+        "background_tasks": lambda: _cleanup_model_by_time(db, BackgroundTask, cutoff),
+        "model_configs": lambda: _cleanup_model_by_time(db, ModelConfig, cutoff),
     }
 
     handler = cleanup_map.get(target_type)
     if handler is not None:
-        return handler
+        return handler()
     logger.warning(f"保留策略清理: 未知目标类型 '{target_type}'，跳过")
     return 0
 

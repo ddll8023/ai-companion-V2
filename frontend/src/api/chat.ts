@@ -58,20 +58,28 @@ export async function streamChat(
   onError: (error: Error) => void,
   signal?: AbortSignal,
 ): Promise<void> {
-  // ── Electron 模式：通过 IPC 发送，密钥由主进程注入 ──
+  // ── Electron 模式：通过 IPC 逐 token 推送 ──
   if (typeof window !== 'undefined' && window.electronAPI) {
     try {
-      const result = await window.electronAPI.streamChat({ sessionId, content, configId })
+      const cleanup = window.electronAPI.streamChat(
+        { sessionId, content, configId },
+        {
+          onToken: (token: string) => {
+            onEvent({ type: 'token', content: token })
+          },
+          onDone: (messageId: number | null) => {
+            onEvent({ type: 'done', message_id: messageId ?? undefined })
+          },
+          onError: (message: string) => {
+            onEvent({ type: 'error', message })
+            onError(new Error(message))
+          },
+        },
+      )
 
-      if (result.code === 0 && result.data) {
-        // 返回完整的助手消息（包含所有 token 拼接结果）
-        if (result.data.content) {
-          onEvent({ type: 'token', content: result.data.content })
-        }
-        onEvent({ type: 'done', message_id: result.data.message_id })
-      } else if (result.code !== 0) {
-        onEvent({ type: 'error', message: result.message || '对话生成失败' })
-        onError(new Error(result.message || '对话生成失败'))
+      // 注册中止清理
+      if (signal) {
+        signal.addEventListener('abort', () => { cleanup() })
       }
       return
     } catch (e) {
@@ -84,8 +92,10 @@ export async function streamChat(
   // 密钥通过请求体传递，仅用于开发环境
   let apiKey: string | undefined
   try {
-    // 浏览器模式：从 localStorage 读取
-    apiKey = localStorage.getItem(`model_key_${configId}`) || undefined
+    // 浏览器模式：从 localStorage 读取（仅限 DEV）
+    if (import.meta.env.DEV) {
+      apiKey = localStorage.getItem(`model_key_${configId}`) || undefined
+    }
   } catch {
     // localStorage 不可用时忽略
   }

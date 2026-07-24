@@ -10,10 +10,11 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, Text, func
 
+from app.core.base_model import BaseModel
 from app.core.database import Base
 
 
-class Profile(Base):
+class Profile(BaseModel):
     """画像特征表。"""
 
     __tablename__ = "profiles"
@@ -49,16 +50,6 @@ class Profile(Base):
     version = Column(Integer, nullable=False, default=1, comment="版本号，纠正后递增")
     source_version = Column(String(64), nullable=True, comment="来源记忆版本号")
     error_message = Column(String(256), nullable=True, comment="错误信息（提取失败时记录）")
-    created_at = Column(
-        DateTime, server_default=func.now(), nullable=False, comment="创建时间",
-    )
-    updated_at = Column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-        comment="更新时间",
-    )
 
     def __repr__(self):
         return (

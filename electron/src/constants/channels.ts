@@ -31,6 +31,9 @@ export const IPC_CHANNELS = {
   /** 流式对话：Renderer 发送消息（不含 API Key），主进程注入 Key 后转发 */
   CHAT_STREAM: 'chat:stream',
 
+  /** 流式对话事件推送（main → renderer）：逐 token / done / error */
+  CHAT_STREAM_EVENT: 'chat:stream-event',
+
   /** 模型连接测试：Renderer 发送 configId（不含 API Key），主进程注入 Key 后转发 */
   MODEL_TEST: 'model:test',
 

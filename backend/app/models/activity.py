@@ -10,6 +10,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, func
 
+from app.core.base_model import BaseModel
 from app.core.database import Base
 
 
@@ -63,9 +64,10 @@ class Activity(Base):
 
 # 行为统计查询的覆盖索引
 Index("ix_activities_created_at_app_name", Activity.created_at, Activity.app_name)
+Index("ix_activities_platform_started", Activity.platform, Activity.started_at)
 
 
-class PrivacyRule(Base):
+class PrivacyRule(BaseModel):
     """隐私规则表。
 
     定义桌面活动采集的隐私控制规则。规则按优先级顺序评估。
@@ -90,16 +92,6 @@ class PrivacyRule(Base):
     )
     priority = Column(
         Integer, nullable=False, default=0, comment="优先级（数值越高优先）",
-    )
-    created_at = Column(
-        DateTime, server_default=func.now(), nullable=False, comment="创建时间",
-    )
-    updated_at = Column(
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-        comment="更新时间",
     )
 
     def __repr__(self):

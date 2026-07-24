@@ -226,9 +226,11 @@
 <script setup lang="ts">
 import { onMounted, ref, reactive } from 'vue'
 import { useAppStore } from '@/stores/app'
+import type { ModelConfig } from '@/types/api'
 import * as modelApi from '@/api/model'
 import * as memoryApi from '@/api/memory'
 import * as activityApi from '@/api/activity'
+import * as goalApi from '@/api/goal'
 import ErrorState from '@/components/custom/ErrorState.vue'
 
 const appStore = useAppStore()
@@ -268,7 +270,7 @@ async function initDashboard() {
       modelApi.listConfigs(),
       memoryApi.listMemories({ status: 'candidate', page: 1, page_size: 1 }),
       // 待完成任务（状态 0=待处理）
-      import('@/api/goal').then(m => m.listTasks({ status: 0, page: 1, page_size: 1 })),
+      goalApi.listTasks({ status: 0, page: 1, page_size: 1 }),
       activityApi.listActivities({ page: 1, page_size: 1 }),
     ])
     await appStore.fetchHealth()
@@ -276,16 +278,12 @@ async function initDashboard() {
     // 模型配置状态
     if (configsRes.status === 'fulfilled') {
       const configs = configsRes.value.data?.lists || []
-      modelConfigured.value = configs.some((c: any) => c.status === 'active')
+      modelConfigured.value = (configs as ModelConfig[]).some(c => c.status === 'active')
       steps.modelConfigured = modelConfigured.value
     }
 
-    // 会话状态（通过 localStorage 标记简化判断）
-    try {
-      steps.sessionCreated = localStorage.getItem('ai_companion_has_session') === 'true'
-    } catch {
-      steps.sessionCreated = false
-    }
+    // 会话状态（通过 store 判断）
+    steps.sessionCreated = appStore.hasSession
 
     // 待确认记忆
     if (memoriesRes.status === 'fulfilled') {

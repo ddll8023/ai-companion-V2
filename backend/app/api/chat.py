@@ -142,7 +142,7 @@ def chat_stream(
     )
     if init_result.get("error"):
         return JSONResponse(
-            status_code=200,
+            status_code=400,
             content=error(message=init_result["error"]),
         )
 

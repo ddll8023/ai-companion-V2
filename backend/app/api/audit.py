@@ -6,16 +6,17 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.models.audit import AuditLog
 from app.schemas.audit import AuditLogQueryRequest
 from app.schemas.common import ApiResponse, PaginatedResponse
 from app.schemas.response import error, success
 from app.services import audit as services_audit
 from app.utils.exception import ServiceException
+from app.utils.logger_config import setup_logger
+
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/audit", tags=["审计日志"])
 
@@ -26,30 +27,11 @@ def get_audit_stats(
 ):
     """获取审计日志统计概览。"""
     try:
-        total = db.scalar(select(func.count()).select_from(AuditLog))
-        success_count = db.scalar(
-            select(func.count()).select_from(AuditLog).where(AuditLog.result == 0)
-        )
-        fail_count = db.scalar(
-            select(func.count()).select_from(AuditLog).where(AuditLog.result == 1)
-        )
-
-        # 按操作类型分组统计
-        rows = db.execute(
-            select(AuditLog.action, func.count().label("count"))
-            .group_by(AuditLog.action)
-            .order_by(func.count().desc())
-        ).all()
-        by_action = [{"action": row.action, "count": row.count} for row in rows]
-
-        return success(data={
-            "total": total or 0,
-            "success": success_count or 0,
-            "fail": fail_count or 0,
-            "by_action": by_action,
-        })
-    except Exception as e:
-        return error(code=500, message=f"查询审计统计失败: {e}")
+        stats = services_audit.get_audit_stats(db)
+        return success(data=stats)
+    except Exception as exc:
+        logger.exception("查询审计统计失败")
+        return error(code=500, message="查询审计统计失败")
 
 
 @router.get("/actions", response_model=ApiResponse)
@@ -58,12 +40,11 @@ def get_audit_actions(
 ):
     """获取审计操作类型列表。"""
     try:
-        rows = db.execute(
-            select(AuditLog.action).distinct().order_by(AuditLog.action)
-        ).scalars().all()
-        return success(data=rows)
-    except Exception as e:
-        return error(code=500, message=f"查询操作类型失败: {e}")
+        actions = services_audit.get_audit_actions(db)
+        return success(data=actions)
+    except Exception as exc:
+        logger.exception("查询操作类型失败")
+        return error(code=500, message="查询操作类型失败")
 
 
 @router.get("/target-types", response_model=ApiResponse)
@@ -72,29 +53,15 @@ def get_audit_target_types(
 ):
     """获取审计对象类型列表。"""
     try:
-        rows = db.execute(
-            select(AuditLog.target_type).distinct().order_by(AuditLog.target_type)
-        ).scalars().all()
-        return success(data=[r for r in rows if r is not None])
-    except Exception as e:
-        return error(code=500, message=f"查询对象类型失败: {e}")
-
-
-@router.post("/list", response_model=ApiResponse[PaginatedResponse])
-def query_audit_logs(
-    body: AuditLogQueryRequest,
-    db: Annotated[Session, Depends(get_db)],
-):
-    """查询审计日志列表（POST 方法）。"""
-    try:
-        result = services_audit.query_audit_logs(db, body)
-        return success(data=result)
-    except ServiceException as e:
-        return error(code=e.code, message=e.message)
+        types = services_audit.get_audit_target_types(db)
+        return success(data=types)
+    except Exception as exc:
+        logger.exception("查询对象类型失败")
+        return error(code=500, message="查询对象类型失败")
 
 
 @router.get("/list", response_model=ApiResponse[PaginatedResponse])
-def query_audit_logs_get(
+def query_audit_logs(
     db: Annotated[Session, Depends(get_db)],
     action: str | None = Query(None, description="操作类型"),
     target_type: str | None = Query(None, description="操作对象类型"),
@@ -119,3 +86,6 @@ def query_audit_logs_get(
         return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
+    except Exception as exc:
+        logger.exception("查询审计日志失败")
+        return error(code=500, message="查询审计日志失败")

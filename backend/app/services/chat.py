@@ -20,6 +20,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.core import api_key_cache
+from app.core.config import settings
 from app.core.database import commit_or_rollback, get_background_db_session
 from app.models.chat import ChatSession, Message
 from app.models.memory import MemoryReference
@@ -37,7 +38,7 @@ from app.utils.logger_config import setup_logger
 logger = setup_logger(__name__)
 
 DEFAULT_TITLE = "新对话"
-_DEFAULT_SYSTEM_PROMPT = "你是一个有用的 AI 助手。请使用中文回复用户，除非用户使用其他语言提问。"
+_DEFAULT_SYSTEM_PROMPT = settings.SYSTEM_PROMPT
 
 
 # ── 会话 CRUD ──────────────────────────────────────────────────────────────
@@ -265,7 +266,7 @@ def initialize_chat_stream(
         system_prompt = _DEFAULT_SYSTEM_PROMPT
 
     # 尝试自动更新会话标题（首次对话时）
-    _try_auto_title(db, session_id, user_content, history_messages)
+    _try_auto_title(db, session_id, user_content, history_messages, resolved_key)
 
     return {
         "user_message_id": user_msg.id,
@@ -389,18 +390,52 @@ def _try_auto_title(
     session_id: int,
     user_content: str,
     history: list[MessageResponse],
+    api_key: str | None = None,
 ) -> None:
-    """首次对话时自动设置会话标题（使用用户消息前 N 字）。"""
+    """首次对话时自动设置会话标题。
+
+    优先调用 LLM 生成摘要标题（需 API Key 和激活配置），
+    失败时兜底使用用户消息前 30 字。
+    """
     session = _get_session_or_error(db, session_id)
 
     # 只有标题为默认值时且这是第一条用户消息时才设置
-    if session.title == DEFAULT_TITLE and len([m for m in history if m.role == "user"]) <= 1:
-        # 使用用户消息的前 30 个字符作为标题
-        new_title = user_content[:30]
-        if len(user_content) > 30:
-            new_title += "…"
-        session.title = new_title
-        commit_or_rollback(db)
+    if session.title != DEFAULT_TITLE:
+        return
+    user_msgs = [m for m in history if m.role == "user"]
+    if len(user_msgs) > 1:
+        return
+
+    # 优先尝试 LLM 摘要标题（需要 API Key + 激活配置）
+    if api_key:
+        try:
+            active_config = model_provider.get_active_config(db)
+            if active_config:
+                summary = model_provider.chat_sync(
+                    provider=active_config.provider,
+                    model_name=active_config.model_name,
+                    api_key=api_key,
+                    api_base=active_config.api_base,
+                    system_prompt="为以下用户消息生成一个简短的对话标题（20 字以内，不要引号）。",
+                    messages=[{"role": "user", "content": user_content[:500]}],
+                )
+                if summary:
+                    summary = summary.strip().strip('"').strip("'")
+                    if len(summary) > 128:
+                        summary = summary[:125] + "…"
+                    session.title = summary
+                    commit_or_rollback(db)
+                    logger.info(f"AI 摘要标题: id={session_id} title='{summary[:30]}…'")
+                    return
+        except Exception:
+            logger.debug("AI 摘要标题失败，使用截断标题兜底")
+
+    # 兜底：使用用户消息的前 30 个字符作为标题
+    new_title = user_content[:30]
+    if len(user_content) > 30:
+        new_title += "…"
+    session.title = new_title
+    commit_or_rollback(db)
 
 
 # ── 内部方法 ────────────────────────────────────────────────────────────────

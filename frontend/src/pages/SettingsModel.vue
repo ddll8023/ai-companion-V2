@@ -496,11 +496,19 @@ async function saveKey() {
   keySaving.value = true
   keyError.value = null
   try {
-    // 通过通信适配器保存密钥（Electron 模式写入 keystore）
-    const saved = await adapter.saveApiKey(keyDialogConfig.value.id, keyInput.value)
-    if (!saved) {
-      keyError.value = '保存密钥失败'
-      return
+    const isElectron = typeof window !== 'undefined' && window.electronAPI
+    // 密钥通过 IPC 写入安全存储或 localStorage（开发环境）
+    if (isElectron) {
+      const result = await window.electronAPI!.keystoreSet(
+        `model_key_${keyDialogConfig.value.id}`,
+        keyInput.value
+      )
+      if (!result.success) {
+        keyError.value = result.error || '保存密钥失败'
+        return
+      }
+    } else {
+      localStorage.setItem(`model_key_${keyDialogConfig.value.id}`, keyInput.value)
     }
     // 更新 has_key 状态（所有环境）
     await modelApi.updateConfig(keyDialogConfig.value.id, { has_key: true })

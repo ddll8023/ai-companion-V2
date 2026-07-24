@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -59,7 +59,7 @@ def list_goals(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/{goal_id}/detail", response_model=ApiResponse[GoalDetailResponse])
+@router.get("/{goal_id}", response_model=ApiResponse[GoalDetailResponse])
 def get_goal(
     goal_id: int,
     db: Annotated[Session, Depends(get_db)],
@@ -72,7 +72,7 @@ def get_goal(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/{goal_id}", response_model=ApiResponse[GoalResponse])
+@router.put("/{goal_id}", response_model=ApiResponse[GoalResponse])
 def update_goal(
     goal_id: int,
     body: GoalUpdate,
@@ -86,19 +86,15 @@ def update_goal(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/{goal_id}/delete", response_model=ApiResponse[dict])
+@router.delete("/{goal_id}", response_model=ApiResponse[dict])
 def delete_goal(
     goal_id: int,
-    body: GoalDeleteRequest,
+    task_action: str = Query("unlink", description="关联任务处理方式: unlink=解除关联, cascade=级联删除"),
     db: Annotated[Session, Depends(get_db)],
 ):
-    """删除目标。
-
-    参数:
-        task_action: 关联任务处理方式，unlink=解除关联，cascade=级联删除
-    """
+    """删除目标。"""
     try:
-        result = services_goal.delete_goal(db, goal_id, body)
+        result = services_goal.delete_goal(db, goal_id, GoalDeleteRequest(task_action=task_action))
         return success(data=result, message="目标已删除")
     except ServiceException as e:
         return error(code=e.code, message=e.message)
@@ -133,7 +129,7 @@ def list_tasks(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/tasks/{task_id}/detail", response_model=ApiResponse[TaskWithGoalResponse])
+@router.get("/tasks/{task_id}", response_model=ApiResponse[TaskWithGoalResponse])
 def get_task(
     task_id: int,
     db: Annotated[Session, Depends(get_db)],
@@ -146,7 +142,7 @@ def get_task(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/tasks/{task_id}", response_model=ApiResponse[TaskResponse])
+@router.put("/tasks/{task_id}", response_model=ApiResponse[TaskResponse])
 def update_task(
     task_id: int,
     body: TaskUpdate,
@@ -160,7 +156,7 @@ def update_task(
         return error(code=e.code, message=e.message)
 
 
-@router.post("/tasks/{task_id}/delete", response_model=ApiResponse[dict])
+@router.delete("/tasks/{task_id}", response_model=ApiResponse[dict])
 def delete_task(
     task_id: int,
     db: Annotated[Session, Depends(get_db)],

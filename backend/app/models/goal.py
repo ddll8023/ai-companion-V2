@@ -7,43 +7,37 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, SmallInteger, String, Text, func
+from sqlalchemy import CheckConstraint, Column, DateTime, ForeignKey, Integer, SmallInteger, String, Text, func
 
-from app.core.database import Base
+from app.core.base_model import BaseModel
 
 
-class Goal(Base):
+class Goal(BaseModel):
     """目标表。"""
 
     __tablename__ = "goals"
 
-    id = Column[BigInteger](BigInteger, primary_key=True, autoincrement=True, comment="主键 ID")
-    title = Column[str](String(256), nullable=False, comment="目标标题")
-    description = Column[str](Text, nullable=True, comment="目标描述")
-    status = Column[int](
+    id = Column(Integer, primary_key=True, autoincrement=True, comment="主键 ID")
+    title = Column(String(256), nullable=False, comment="目标标题")
+    description = Column(Text, nullable=True, comment="目标描述")
+    status = Column(
         SmallInteger,
         nullable=False,
         default=0,
         index=True,
         comment="状态: 0=进行中, 1=已完成, 2=已放弃",
     )
-    target_date = Column[datetime](DateTime, nullable=True, comment="目标完成日期")
-    created_at = Column[datetime](
-        DateTime, server_default=func.now(), nullable=False, comment="创建时间",
-    )
-    updated_at = Column[datetime](
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-        comment="更新时间",
+    target_date = Column(DateTime, nullable=True, comment="目标完成日期")
+
+    __table_args__ = (
+        CheckConstraint("status IN (0, 1, 2)", name="ck_goal_status"),
     )
 
     def __repr__(self):
         return f"<Goal(id={self.id}, title='{self.title}', status={self.status})>"
 
 
-class Task(Base):
+class Task(BaseModel):
     """任务表。
 
     支持以下场景：
@@ -53,56 +47,53 @@ class Task(Base):
 
     __tablename__ = "tasks"
 
-    id = Column[BigInteger](BigInteger, primary_key=True, autoincrement=True, comment="主键 ID")
-    goal_id = Column[int](
-        BigInteger,
+    id = Column(Integer, primary_key=True, autoincrement=True, comment="主键 ID")
+    goal_id = Column(
+        Integer,
         ForeignKey("goals.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
         comment="关联目标 ID",
     )
-    title = Column[str](String(256), nullable=False, comment="任务标题")
-    description = Column[str](Text, nullable=True, comment="任务描述")
-    status = Column[int](
+    title = Column(String(256), nullable=False, comment="任务标题")
+    description = Column(Text, nullable=True, comment="任务描述")
+    status = Column(
         SmallInteger,
         nullable=False,
         default=0,
         index=True,
         comment="状态: 0=待处理, 1=进行中, 2=已完成, 3=已放弃",
     )
-    priority = Column[int](
+    priority = Column(
         SmallInteger,
         nullable=False,
         default=0,
         comment="优先级: 0=无, 1=低, 2=中, 3=高, 4=紧急",
     )
-    is_from_suggestion = Column[int](
+    is_from_suggestion = Column(
         SmallInteger,
         nullable=False,
         default=0,
         comment="是否来自 AI 建议: 0=否, 1=是",
     )
-    suggestion_status = Column[int](
+    suggestion_status = Column(
         SmallInteger,
         nullable=False,
         default=0,
         index=True,
         comment="建议状态: 0=无, 1=待确认, 2=已接受, 3=已拒绝",
     )
-    suggestion_data = Column[str](
+    suggestion_data = Column(
         Text,
         nullable=True,
         comment="原始建议数据（JSON 字符串，含建议理由等）",
     )
-    created_at = Column[datetime](
-        DateTime, server_default=func.now(), nullable=False, comment="创建时间",
-    )
-    updated_at = Column[datetime](
-        DateTime,
-        server_default=func.now(),
-        onupdate=func.now(),
-        nullable=False,
-        comment="更新时间",
+
+    __table_args__ = (
+        CheckConstraint("status IN (0, 1, 2, 3)", name="ck_task_status"),
+        CheckConstraint("priority IN (0, 1, 2, 3, 4)", name="ck_task_priority"),
+        CheckConstraint("is_from_suggestion IN (0, 1)", name="ck_task_is_suggestion"),
+        CheckConstraint("suggestion_status IN (0, 1, 2, 3)", name="ck_task_suggestion_status"),
     )
 
     def __repr__(self):

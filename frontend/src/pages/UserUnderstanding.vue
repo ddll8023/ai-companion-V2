@@ -485,13 +485,7 @@ async function handleExtract() {
   extracting.value = true
   error.value = null
   try {
-    // 检查 Electron 运行环境（浏览器开发模式不支持此功能）
-    if (typeof window === 'undefined' || !window.electronAPI) {
-      error.value = '画像提取需要 Electron 运行时支持，请使用桌面应用'
-      extracting.value = false
-      return
-    }
-
+    // API Key 由后端进程缓存管理（对话时注入），浏览器和 Electron 均支持
     const res = await extractProfiles()
     if (res.data?.result) {
       const result = JSON.parse(res.data.result)
@@ -514,8 +508,8 @@ async function handleConfirm(item: Profile) {
   try {
     await confirmProfile(item.id)
     await fetchProfiles()
-  } catch {
-    error.value = '确认失败'
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? `确认失败: ${e.message}` : '确认失败'
   } finally {
     actionLoading.value = false
   }
@@ -540,8 +534,8 @@ async function handleCorrect() {
     })
     correctDialogVisible.value = false
     await fetchProfiles()
-  } catch {
-    error.value = '纠正失败'
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? `纠正失败: ${e.message}` : '纠正失败'
   } finally {
     actionLoading.value = false
   }
@@ -556,8 +550,8 @@ async function handleRejectOrDelete(item: Profile) {
       await deleteProfile(item.id)
     }
     await fetchProfiles()
-  } catch {
-    error.value = '操作失败'
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? `操作失败: ${e.message}` : '操作失败'
   } finally {
     actionLoading.value = false
   }
@@ -575,8 +569,8 @@ async function openDetail(item: Profile) {
     const res = await getProfile(item.id)
     detailData.value = res.data
     detailVisible.value = true
-  } catch {
-    error.value = '获取详情失败'
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? `获取详情失败: ${e.message}` : '获取详情失败'
   }
 }
 

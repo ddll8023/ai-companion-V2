@@ -7,6 +7,8 @@
  * macOS 下，能力检测会实时调用系统 API 判断权限状态。
  */
 
+import { getBaseCapabilities } from './capabilities';
+
 /** 权限状态枚举（与设计文档一致）。 */
 export const PermissionStatus = {
   /** 平台支持且已授权 */
@@ -109,7 +111,7 @@ export async function getPlatformCapabilities(): Promise<PermissionState[]> {
     capabilities = await getMacOSCapabilities();
   } else {
     // Windows 返回基础定义（阶段 12 实现真实检测）
-    capabilities = getWindowsCapabilities();
+    capabilities = getBaseCapabilities('windows');
   }
 
   // 更新缓存
@@ -124,7 +126,7 @@ export async function getPlatformCapabilities(): Promise<PermissionState[]> {
  * 同步版本，使用缓存或默认值。
  */
 export function getCapabilityMap(): Record<PermissionName, PermissionStatusType> {
-  const caps = _capabilityCache || getDefaultCapabilities();
+  const caps = _capabilityCache || getBaseCapabilities();
   const map: Record<string, PermissionStatusType> = {};
   for (const cap of caps) {
     map[cap.name] = cap.status;
@@ -147,97 +149,9 @@ async function getMacOSCapabilities(): Promise<PermissionState[]> {
   } catch {
     // 动态导入失败时返回默认值
     console.warn('[Platform] macOS 权限检测模块加载失败，使用默认值');
-    return getDefaultCapabilities();
+    return getBaseCapabilities();
   }
 }
 
-/**
- * 获取 Windows 的基础能力定义（阶段 12 完善）。
- */
-function getWindowsCapabilities(): PermissionState[] {
-  return [
-    {
-      name: PermissionNames.ACTIVITY_CAPTURE,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '活动采集',
-      description: '采集前台应用和窗口信息',
-    },
-    {
-      name: PermissionNames.ACCESSIBILITY,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '辅助功能',
-      description: '获取前台应用和窗口标题',
-    },
-    {
-      name: PermissionNames.INPUT_MONITORING,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '输入监控',
-      description: '监控键盘输入事件',
-    },
-    {
-      name: PermissionNames.SCREEN_RECORDING,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '屏幕录制',
-      description: '屏幕截图和录制',
-    },
-    {
-      name: PermissionNames.NOTIFICATION,
-      status: PermissionStatus.AVAILABLE,
-      label: '系统通知',
-      description: '发送桌面通知',
-    },
-    {
-      name: PermissionNames.AUTOMATION,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '自动化',
-      description: '控制其他应用',
-    },
-  ];
-}
-
-/**
- * 获取默认能力状态（fallback）。
- * 在没有实时权限检测时使用。
- */
-function getDefaultCapabilities(): PermissionState[] {
-  const platform = getPlatform();
-
-  return [
-    {
-      name: PermissionNames.ACTIVITY_CAPTURE,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '活动采集',
-      description: '采集前台应用和窗口信息',
-    },
-    {
-      name: PermissionNames.ACCESSIBILITY,
-      status: platform === 'macos' ? PermissionStatus.PENDING_AUTH : PermissionStatus.NOT_IMPLEMENTED,
-      label: '辅助功能',
-      description: '获取前台应用和窗口标题',
-    },
-    {
-      name: PermissionNames.INPUT_MONITORING,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '输入监控',
-      description: '监控键盘输入事件',
-    },
-    {
-      name: PermissionNames.SCREEN_RECORDING,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '屏幕录制',
-      description: '屏幕截图和录制',
-    },
-    {
-      name: PermissionNames.NOTIFICATION,
-      status: PermissionStatus.AVAILABLE,
-      label: '系统通知',
-      description: '发送桌面通知',
-    },
-    {
-      name: PermissionNames.AUTOMATION,
-      status: PermissionStatus.NOT_IMPLEMENTED,
-      label: '自动化',
-      description: '控制其他应用',
-    },
-  ];
-}
+/** 导出基础能力查询函数，供外部模块统一使用 */
+export type { PermissionState, PermissionName, PermissionStatusType, PlatformType };

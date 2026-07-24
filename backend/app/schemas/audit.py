@@ -14,6 +14,9 @@ class AuditLogResponse(BaseModel):
     action: str
     target_type: str | None = None
     target_id: int | None = None
+    actor_id: int | None = None
+    actor_name: str | None = None
+    ip_address: str | None = None
     summary: str | None = None
     detail: str | None = None
     result: int = 0

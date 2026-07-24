@@ -14,6 +14,9 @@ from app.schemas.retrieval import Fts5Status, MemoryContext
 from app.services import retrieval as services_retrieval
 from app.services.embedding import get_embedding_dimension
 from app.utils.exception import ServiceException
+from app.utils.logger_config import setup_logger
+
+logger = setup_logger(__name__)
 
 router = APIRouter(prefix="/api/v1/retrieval", tags=["检索"])
 
@@ -41,6 +44,7 @@ def get_fts5_status(
             vector_available = True
         except Exception:
             vector_available = False
+            logger.warning("向量嵌入状态检查失败（检索功能降级）")
 
         return success(data={
             "fts5": fts5,

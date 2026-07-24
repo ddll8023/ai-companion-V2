@@ -14,6 +14,8 @@ export const useAppStore = defineStore('app', () => {
   const backendReady = ref(false)
   const loading = ref(false)
   const error = ref<string | null>(null)
+  /** 是否已创建过会话（供 Dashboard 引导流程使用） */
+  const hasSession = ref(false)
 
   /** 刷新健康状态 */
   async function fetchHealth() {
@@ -49,6 +51,7 @@ export const useAppStore = defineStore('app', () => {
     backendReady,
     loading,
     error,
+    hasSession,
     fetchHealth,
     updateBackendStatus,
   }

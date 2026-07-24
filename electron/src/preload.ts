@@ -59,17 +59,36 @@ const api = {
   // ── 安全对话 ──────────────────────────────────────────
   /**
    * 流式对话（密钥由主进程注入，Renderer 不持有密钥）。
-   * 返回 readablestream 兼容的 AsyncIterable<ChatStreamEvent>。
+   * 通过事件回调逐 token 推送，不再一次性返回。
+   *
+   * @returns 清理函数，用于取消监听和停止流
    */
-  streamChat: (data: {
-    sessionId: number;
-    content: string;
-    configId: number;
-  }): Promise<{
-    code: number;
-    message: string;
-    data?: any;
-  }> => ipcRenderer.invoke(IPC_CHANNELS.CHAT_STREAM, data),
+  streamChat: (
+    data: { sessionId: number; content: string; configId: number },
+    callbacks: {
+      onToken: (content: string) => void;
+      onDone: (messageId: number | null) => void;
+      onError: (message: string) => void;
+    },
+  ): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, eventData: any) => {
+      if (eventData.type === 'token' && eventData.content) {
+        callbacks.onToken(eventData.content);
+      } else if (eventData.type === 'done') {
+        callbacks.onDone(eventData.message_id ?? null);
+      } else if (eventData.type === 'error') {
+        callbacks.onError(eventData.message || '对话生成失败');
+      }
+    };
+
+    ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_EVENT, handler);
+    ipcRenderer.send(IPC_CHANNELS.CHAT_STREAM, data);
+
+    // 返回清理函数
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_EVENT, handler);
+    };
+  },
 
   // ── 安全模型操作 ─────────────────────────────────────
   /** 测试模型连接（密钥由主进程注入） */

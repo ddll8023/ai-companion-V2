@@ -35,8 +35,19 @@ export interface ElectronAPI {
   keystoreHas: (key: string) => Promise<{ success: boolean; has: boolean }>
 
   // ── 安全对话（密钥由主进程注入） ──
-  /** 流式对话（密钥由主进程从 keystore 注入，Renderer 不接触密钥） */
-  streamChat: (data: ChatStreamRequest) => Promise<{ code: number; message: string; data?: any }>
+  /**
+   * 流式对话（密钥由主进程从 keystore 注入，Renderer 不接触密钥）。
+   * 通过回调逐 token 推送，不再一次性返回。
+   * @returns 清理函数，用于取消监听和停止流
+   */
+  streamChat: (
+    data: ChatStreamRequest,
+    callbacks: {
+      onToken: (content: string) => void;
+      onDone: (messageId: number | null) => void;
+      onError: (message: string) => void;
+    },
+  ) => () => void
 
   // ── 安全模型操作（密钥由主进程注入） ──
   /** 测试模型连接（密钥由主进程从 keystore 注入） */

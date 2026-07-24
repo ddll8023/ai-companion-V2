@@ -200,35 +200,7 @@ export interface MemoryListQuery {
   page_size?: number
 }
 
-/** Electron API 接口 */
-export interface ElectronAPI {
-  apiGet: <T>(url: string) => Promise<ApiResponse<T>>
-  apiPost: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
-  apiPut: <T>(url: string, data?: unknown) => Promise<ApiResponse<T>>
-  apiDelete: <T>(url: string) => Promise<ApiResponse<T>>
-  keystoreSet: (key: string, value: string) => Promise<{ success: boolean; error?: string }>
-  keystoreGet: (key: string) => Promise<{ success: boolean; value: string | null }>
-  keystoreDelete: (key: string) => Promise<{ success: boolean }>
-  keystoreHas: (key: string) => Promise<{ success: boolean; has: boolean }>
-  getPlatform: () => Promise<string>
-  getAppVersion: () => Promise<string>
-  /** 获取 Electron 运行时状态（PID、版本、运行时长等） */
-  getAppStatus: () => Promise<{
-    electronVersion: string
-    nodeVersion: string
-    chromeVersion: string
-    appVersion: string
-    pid: number
-    platform: string
-    appPath: string
-    userDataPath: string
-    uptime: number
-  }>
-  /** 获取平台各能力状态 */
-  getPlatformCapabilities: () => Promise<PlatformCapabilitiesResponse>
-  onBackendStatus: (callback: (status: { ready: boolean }) => void) => void
-  removeBackendStatusListener: () => void
-}
+// ElectronAPI 接口定义在 electron.d.ts 中，此处不再重复。
 
 // ── 目标与任务类型 ──────────────────────────────────────────────────────────
 
