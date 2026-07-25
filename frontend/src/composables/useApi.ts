@@ -40,6 +40,19 @@ const httpAdapter: CommunicationAdapter = {
   delete: <T>(url: string) => extractData(request.delete<ApiResponse<T>>(url)),
 }
 
+/** 将数据转为纯对象，避免 Vue reactive proxy 通过 IPC 时触发结构化克隆兼容性问题 */
+function toPlainObject<T>(data: T): T {
+  if (data === undefined || data === null) return data
+  // 只有普通对象才需要转换，基础类型和数组直接返回
+  if (typeof data !== 'object') return data
+  try {
+    return JSON.parse(JSON.stringify(data))
+  } catch {
+    // 如果序列化失败（如循环引用），回退到浅拷贝
+    return Array.isArray(data) ? [...data] as unknown as T : { ...data }
+  }
+}
+
 /** IPC 适配器（Electron 正式环境） */
 const ipcAdapter: CommunicationAdapter = {
   get: async <T>(url: string) => {
@@ -50,14 +63,14 @@ const ipcAdapter: CommunicationAdapter = {
     return result as ApiResponse<T>
   },
   post: async <T>(url: string, data?: unknown) => {
-    const result = await window.electronAPI!.apiPost<T>(url, data)
+    const result = await window.electronAPI!.apiPost<T>(url, toPlainObject(data))
     if (result.code !== 0) {
       throw new Error(result.message || '请求失败')
     }
     return result as ApiResponse<T>
   },
   put: async <T>(url: string, data?: unknown) => {
-    const result = await window.electronAPI!.apiPut<T>(url, data)
+    const result = await window.electronAPI!.apiPut<T>(url, toPlainObject(data))
     if (result.code !== 0) {
       throw new Error(result.message || '请求失败')
     }

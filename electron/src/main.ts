@@ -450,6 +450,7 @@ const API_ACCESS_RULES = {
       '/api/v1/goals/',
       '/api/v1/memories/',
       '/api/v1/models/configs',
+      '/api/v1/models/configs/',  // 匹配子路径如 /api/v1/models/configs/{id}
       '/api/v1/profiles/',
       '/api/v1/statistics/',
       '/api/v1/tasks/',

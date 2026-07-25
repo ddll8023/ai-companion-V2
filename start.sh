@@ -123,12 +123,23 @@ start_frontend() {
 start_electron() {
     log_step "正在编译并启动 Electron..."
 
-    # 先编译 TypeScript
+    # 完整编译：tsc 编译 TypeScript（preload 已内联 IPC_CHANNELS 消除本地 require）
     cd "$ELECTRON_DIR"
-    npx tsc || {
-        log_error "Electron TypeScript 编译失败"
+    npm run build || {
+        log_error "Electron 编译失败"
         return 1
     }
+
+    # 诊断：验证 preload.js 不包含沙盒不支持的本地模块引用
+    echo -e "${CYAN}[DIAG]${NC} dist/preload.js 行数: $(wc -l < dist/preload.js)"
+    echo -e "${CYAN}[DIAG]${NC} require 列表: $(grep -o 'require("[^"]*")' dist/preload.js | tr '\n' ' ')"
+    echo -e "${CYAN}[DIAG]${NC} 更新时间: $(date -r dist/preload.js '+%H:%M:%S')"
+    if grep -q 'require.*constants.*channels' dist/preload.js; then
+        log_error "preload.js 编译后仍包含 require('./constants/channels')，内联失败"
+        log_error "文件内容前5行:"
+        head -5 dist/preload.js
+        return 1
+    fi
 
     # 以开发模式启动 Electron
     NODE_ENV=development npx electron . &

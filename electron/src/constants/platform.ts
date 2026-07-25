@@ -154,4 +154,4 @@ async function getMacOSCapabilities(): Promise<PermissionState[]> {
 }
 
 /** 导出基础能力查询函数，供外部模块统一使用 */
-export type { PermissionState, PermissionName, PermissionStatusType, PlatformType };
+

@@ -57,9 +57,9 @@ class Settings(BaseSettings):
         """解析后的数据目录路径。"""
         if self.DATA_DIR:
             return os.path.abspath(self.DATA_DIR)
-        # 浏览器开发模式：使用项目根目录下的 data/
+        # 浏览器开发模式：使用 backend/data/
         return os.path.abspath(
-            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
         )
 
     @property

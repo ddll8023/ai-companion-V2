@@ -17,7 +17,30 @@
  */
 
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS } from './constants/channels';
+
+/** IPC 通道名称常量（与 main.ts 共享的定义一致，内联以避免沙盒 require 问题）。 */
+const IPC_CHANNELS = {
+  API_GET: 'api:get',
+  API_POST: 'api:post',
+  API_PUT: 'api:put',
+  API_DELETE: 'api:delete',
+  KEYSTORE_SET: 'keystore:set',
+  KEYSTORE_GET: 'keystore:get',
+  KEYSTORE_DELETE: 'keystore:delete',
+  KEYSTORE_HAS: 'keystore:has',
+  BACKEND_STATUS: 'backend-status',
+  GET_PLATFORM: 'get-platform',
+  GET_APP_VERSION: 'get-app-version',
+  GET_APP_STATUS: 'get-app-status',
+  GET_PLATFORM_CAPABILITIES: 'get-platform-capabilities',
+  ACTIVITY_CAPTURE_START: 'activity-capture:start',
+  ACTIVITY_CAPTURE_STOP: 'activity-capture:stop',
+  ACTIVITY_CAPTURE_STATUS: 'activity-capture:status',
+  CHAT_STREAM: 'chat:stream',
+  CHAT_STREAM_EVENT: 'chat:stream-event',
+  MODEL_TEST: 'model:test',
+  MODEL_CLEAR_KEY: 'model:clear-key',
+} as const;
 
 // 保存监听器引用，实现精准移除（取代 removeAllListeners）
 let _backendStatusHandler: ((_event: Electron.IpcRendererEvent, status: { ready: boolean }) => void) | null = null;

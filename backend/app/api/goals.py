@@ -89,8 +89,8 @@ def update_goal(
 @router.delete("/{goal_id}", response_model=ApiResponse[dict])
 def delete_goal(
     goal_id: int,
-    task_action: str = Query("unlink", description="关联任务处理方式: unlink=解除关联, cascade=级联删除"),
     db: Annotated[Session, Depends(get_db)],
+    task_action: str = Query("unlink", description="关联任务处理方式: unlink=解除关联, cascade=级联删除"),
 ):
     """删除目标。"""
     try:

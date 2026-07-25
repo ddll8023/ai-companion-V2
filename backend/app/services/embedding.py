@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from typing import Sequence
 
@@ -26,6 +27,13 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_MODEL_NAME: str = "BAAI/bge-small-zh-v1.5"
 _EMBEDDING_DIMENSION: int = 512
+
+# 模型缓存目录（项目本地，不依赖 ~/.cache）
+# 解析路径: backend/app/services/embedding.py → backend/data/models/
+_MODEL_CACHE_DIR: str = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "data", "models",
+)
 
 # ── 全局单例（延迟初始化，线程安全） ────────────────────────────────────────
 
@@ -193,8 +201,10 @@ def _ensure_model() -> bool:
         try:
             from fastembed import TextEmbedding
 
-            _model = TextEmbedding(model_name=_DEFAULT_MODEL_NAME)
-            logger.info("嵌入模型加载完成: %s", _DEFAULT_MODEL_NAME)
+            # 确保缓存目录存在
+            os.makedirs(_MODEL_CACHE_DIR, exist_ok=True)
+            _model = TextEmbedding(model_name=_DEFAULT_MODEL_NAME, cache_dir=_MODEL_CACHE_DIR)
+            logger.info("嵌入模型加载完成: %s （缓存: %s）", _DEFAULT_MODEL_NAME, _MODEL_CACHE_DIR)
             return True
         except ImportError:
             logger.error("fastembed 未安装，嵌入功能不可用")
