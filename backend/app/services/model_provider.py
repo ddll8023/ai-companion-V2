@@ -315,7 +315,11 @@ def _chat_stream_openai(
                     break
                 try:
                     chunk = json.loads(data_str)
-                    delta = chunk.get("choices", [{}])[0].get("delta", {})
+                    # 部分 OpenAI 兼容服务会发送 choices 为空列表的 chunk（如仅含 usage 的收尾帧）
+                    choices = chunk.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
 
                     # 推理 token（o1/o3/DeepSeek-R1 等推理模型）
                     reasoning = delta.get("reasoning_content", "")
@@ -472,7 +476,11 @@ def _chat_sync_openai(
                 return None
 
             result = response.json()
-            return result.get("choices", [{}])[0].get("message", {}).get("content", "")
+            choices = result.get("choices") or []
+            if not choices:
+                logger.warning("chat_sync OpenAI 响应缺少 choices")
+                return None
+            return choices[0].get("message", {}).get("content", "")
     except Exception as e:
         logger.error(f"chat_sync OpenAI 异常: {e!s}", exc_info=True)
         return None
