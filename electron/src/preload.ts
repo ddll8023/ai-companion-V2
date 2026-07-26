@@ -101,8 +101,11 @@ const api = {
       } else if (eventData.type === 'reasoning_token' && eventData.content) {
         callbacks.onReasoning(eventData.content);
       } else if (eventData.type === 'done') {
+        // 流结束时自动移除监听器，防止下一轮对话时旧监听器叠加导致 token 重复
+        ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_EVENT, handler);
         callbacks.onDone(eventData.message_id ?? null);
       } else if (eventData.type === 'error') {
+        ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_EVENT, handler);
         callbacks.onError(eventData.message || '对话生成失败');
       }
     };
