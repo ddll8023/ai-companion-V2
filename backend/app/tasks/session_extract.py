@@ -153,13 +153,15 @@ def _run_session_analysis(
         .limit(1)
     )
 
-    lines = []
+    lines = [f"当前日期：{datetime.now().strftime('%Y-%m-%d')}", ""]
     if previous is not None:
         lines.append(f"【前情摘要】\n{previous.content}\n")
     lines.append("【对话记录】")
     for m in messages:
         lines.append(f"[{m.role} #{m.id}] {m.content}")
 
+    # 模型调用失败（超时/网络/HTTP 错误）由 ServiceException 携带真实原因向上冒泡，
+    # 交由执行器记录并进入重试，不在此处降级为"返回为空"
     result_text = model_provider.chat_sync(
         provider=active_config.provider,
         model_name=active_config.model_name,
@@ -167,9 +169,8 @@ def _run_session_analysis(
         api_base=active_config.api_base,
         system_prompt=SESSION_ANALYSIS_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": "\n".join(lines)}],
+        timeout=model_provider.SYNC_TIMEOUT_BACKGROUND,
     )
-    if not result_text:
-        return {"error": "会话分析模型返回为空"}
 
     parsed = _parse_json(result_text)
     if parsed is None:
@@ -179,7 +180,13 @@ def _run_session_analysis(
     if not summary:
         return {"error": "会话分析未生成摘要"}
 
-    validated = _validate_memories(parsed.get("memories"), user_messages, session_id)
+    raw_memories = parsed.get("memories") or []
+    validated = _validate_memories(raw_memories, user_messages, session_id)
+    if len(raw_memories) != len(validated):
+        logger.info(
+            f"候选记忆校验: 模型返回 {len(raw_memories)} 条, "
+            f"证据校验通过 {len(validated)} 条, session_id={session_id}",
+        )
 
     saved = services_memory.save_session_analysis(
         db,

@@ -5,7 +5,7 @@
       class="w-60 flex-shrink-0 flex flex-col min-h-0 border-r border-border bg-surface/50"
     >
       <!-- 新建对话按钮 -->
-      <div class="p-3">
+      <div class="p-3 space-y-2">
         <button
           class="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark transition-colors"
           :disabled="!canChat"
@@ -13,6 +13,21 @@
         >
           <font-awesome-icon :icon="['fas', 'plus']" />
           新建对话
+        </button>
+        <!-- 批量提取按钮：存在待提取会话时显示 -->
+        <button
+          v-if="extractableSessions.length > 0"
+          class="w-full flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium rounded-lg border border-border text-text-secondary hover:text-primary hover:border-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          :disabled="hasActiveExtracts"
+          :title="hasActiveExtracts ? '正在提取中' : '对全部有新消息的会话提取记忆与画像'"
+          @click="handleExtractAll"
+        >
+          <font-awesome-icon
+            :icon="['fas', hasActiveExtracts ? 'spinner' : 'wand-magic-sparkles']"
+            :class="hasActiveExtracts ? 'animate-spin' : ''"
+            class="text-xs"
+          />
+          {{ hasActiveExtracts ? '提取中…' : `提取全部 (${extractableSessions.length})` }}
         </button>
       </div>
 
@@ -48,6 +63,30 @@
                 :class="currentSessionId === sess.id ? 'text-primary' : 'text-text-tertiary'"
               />
               <span class="truncate">{{ sess.title }}</span>
+              <!-- 提取状态：提取中转圈 / 待提取数量徽标 -->
+              <font-awesome-icon
+                v-if="sessionExtracting(sess)"
+                :icon="['fas', 'spinner']"
+                class="ml-auto flex-shrink-0 text-xs text-primary animate-spin"
+                title="正在提取记忆与画像"
+              />
+              <span
+                v-else-if="(sess.extractable_message_count ?? 0) > 0"
+                class="ml-auto flex-shrink-0 min-w-4 h-4 px-1 flex items-center justify-center rounded-full bg-primary/15 text-primary text-[10px] font-medium"
+                :title="`${sess.extractable_message_count} 条新消息待提取`"
+              >
+                {{ sess.extractable_message_count }}
+              </span>
+            </button>
+            <!-- 快捷提取按钮（hover 显示） -->
+            <button
+              v-if="(sess.extractable_message_count ?? 0) > 0 && !sessionExtracting(sess)"
+              class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded text-text-tertiary opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-primary/10 hover:text-primary focus:opacity-100 transition-all disabled:cursor-not-allowed"
+              :disabled="isGenerating && currentSessionId === sess.id"
+              :title="isGenerating && currentSessionId === sess.id ? '生成中不能提取' : '提取记忆与画像'"
+              @click.stop="requestExtract(sess.id)"
+            >
+              <font-awesome-icon :icon="['fas', 'wand-magic-sparkles']" class="text-xs" />
             </button>
             <button
               class="mr-1 flex-shrink-0 w-7 h-7 flex items-center justify-center rounded text-text-tertiary opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-error/10 hover:text-error focus:opacity-100 transition-all disabled:cursor-not-allowed"
@@ -384,9 +423,12 @@ const showDeleteDialog = ref(false)
 const deleteTarget = ref<Session | null>(null)
 const deletingSessionId = ref<number | null>(null)
 
-const isExtracting = ref(false)
+// 提取任务监控：sessionId → taskId，多个会话的提取任务共用一个轮询定时器
+const extractTasks = ref<Record<number, number>>({})
 const extractNotice = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 let extractPollTimer: number | null = null
+// 本轮批次的结果累计（全部任务完成后生成汇总提示）
+let extractBatchStats = { sessions: 0, memories: 0, created: 0, reinforced: 0, revised: 0, errors: [] as string[] }
 
 const messagesContainer = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -429,13 +471,25 @@ const canSend = computed(() => {
 })
 
 const extractInProgress = computed(() => {
-  return isExtracting.value || !!currentSession.value?.is_extracting
+  const sess = currentSession.value
+  return sess ? sessionExtracting(sess) : false
 })
 
 const canExtract = computed(() => {
   const sess = currentSession.value
   if (!sess || isGenerating.value || extractInProgress.value) return false
   return (sess.extractable_message_count ?? 0) > 0
+})
+
+const extractableSessions = computed(() => {
+  return sessions.value.filter(
+    s => (s.extractable_message_count ?? 0) > 0 && !sessionExtracting(s),
+  )
+})
+
+const hasActiveExtracts = computed(() => {
+  return Object.keys(extractTasks.value).length > 0
+    || sessions.value.some(s => s.is_extracting)
 })
 
 const extractButtonTitle = computed(() => {
@@ -485,13 +539,15 @@ async function fetchMessages() {
   try {
     const res = await chatApi.getMessages(currentSessionId.value)
     messages.value = res.data || []
-    await nextTick()
-    scrollToBottom()
   } catch (e: unknown) {
     errorMessage.value = e instanceof Error ? e.message : '加载消息失败'
   } finally {
     loadingMessages.value = false
   }
+  // 必须在 loading 关闭、消息 DOM 实际渲染后再滚动
+  // （LoadingState 为 v-if/v-else 结构，loading 期间插槽内容不渲染）
+  await nextTick()
+  scrollToBottom()
 }
 
 // ── 会话操作 ──────────────────────────────────────────────────────────────
@@ -695,26 +751,38 @@ function handleStop() {
 
 // ── 会话提取 ──────────────────────────────────────────────────────────────
 
-async function handleExtract() {
-  if (!currentSessionId.value || !canExtract.value) return
-  extractNotice.value = null
-  isExtracting.value = true
+function sessionExtracting(sess: Session): boolean {
+  return extractTasks.value[sess.id] !== undefined || !!sess.is_extracting
+}
 
+function getDevApiKey(): string | undefined {
   // 浏览器开发模式随请求传入 API Key；Electron 模式由后端全局缓存回退
-  let apiKey: string | undefined
   try {
     if (import.meta.env.DEV && activeConfig.value) {
-      apiKey = localStorage.getItem(`model_key_${activeConfig.value.id}`) || undefined
+      return localStorage.getItem(`model_key_${activeConfig.value.id}`) || undefined
     }
   } catch {
     // localStorage 不可用时忽略
   }
+  return undefined
+}
 
+function handleExtract() {
+  if (!currentSessionId.value || !canExtract.value) return
+  requestExtract(currentSessionId.value)
+}
+
+async function requestExtract(sessionId: number) {
+  if (extractTasks.value[sessionId] !== undefined) return
+  extractNotice.value = null
   try {
-    const res = await chatApi.extractSession(currentSessionId.value, apiKey)
-    pollExtractTask(res.data!.task_id)
+    const res = await chatApi.extractSession(sessionId, {
+      apiKey: getDevApiKey(),
+      configId: activeConfig.value?.id,
+    })
+    extractTasks.value = { ...extractTasks.value, [sessionId]: res.data!.task_id }
+    ensureExtractPolling()
   } catch (e: unknown) {
-    isExtracting.value = false
     extractNotice.value = {
       type: 'error',
       text: e instanceof Error ? e.message : '提取任务创建失败',
@@ -722,52 +790,118 @@ async function handleExtract() {
   }
 }
 
-function pollExtractTask(taskId: number) {
-  stopExtractPolling()
-  extractPollTimer = window.setInterval(async () => {
+async function handleExtractAll() {
+  if (hasActiveExtracts.value) return
+  extractNotice.value = null
+  const targets = extractableSessions.value
+  const results = await Promise.allSettled(
+    targets.map(sess => chatApi.extractSession(sess.id, {
+      apiKey: getDevApiKey(),
+      configId: activeConfig.value?.id,
+    })),
+  )
+  const tasks: Record<number, number> = { ...extractTasks.value }
+  const failed: string[] = []
+  results.forEach((result, index) => {
+    if (result.status === 'fulfilled' && result.value.data) {
+      tasks[targets[index].id] = result.value.data.task_id
+    } else {
+      const reason = result.status === 'rejected' && result.reason instanceof Error
+        ? result.reason.message
+        : '任务创建失败'
+      failed.push(`「${targets[index].title}」${reason}`)
+    }
+  })
+  extractTasks.value = tasks
+  if (failed.length > 0) {
+    extractBatchStats.errors.push(...failed)
+  }
+  if (Object.keys(tasks).length > 0) {
+    ensureExtractPolling()
+  } else {
+    // 全部任务创建失败时立即提示，不等轮询周期
+    finishExtractBatch()
+  }
+}
+
+function ensureExtractPolling() {
+  if (extractPollTimer !== null) return
+  extractPollTimer = window.setInterval(pollExtractTasks, 2000)
+}
+
+async function pollExtractTasks() {
+  const entries = Object.entries(extractTasks.value)
+  if (entries.length === 0) {
+    finishExtractBatch()
+    return
+  }
+
+  for (const [sessionIdStr, taskId] of entries) {
     try {
       const res = await chatApi.getExtractTask(taskId)
       const task = res.data
-      if (!task) return
+      if (!task) continue
       if (task.status === 'completed') {
-        stopExtractPolling()
-        isExtracting.value = false
-        extractNotice.value = parseExtractResult(task.result)
-        await fetchSessions()
+        accumulateExtractResult(task.result)
+        removeExtractTask(Number(sessionIdStr))
       } else if (task.status === 'failed' || task.status === 'cancelled') {
-        stopExtractPolling()
-        isExtracting.value = false
-        extractNotice.value = {
-          type: 'error',
-          text: task.error_message || '提取任务失败',
-        }
-        await fetchSessions()
+        extractBatchStats.errors.push(task.error_message || '提取任务失败')
+        removeExtractTask(Number(sessionIdStr))
       }
     } catch {
       // 单次轮询失败不中断，等待下一轮
     }
-  }, 2000)
+  }
+
+  if (Object.keys(extractTasks.value).length === 0) {
+    finishExtractBatch()
+    await fetchSessions()
+  }
 }
 
-function parseExtractResult(resultJson: string | null): { type: 'success' | 'error'; text: string } {
+function removeExtractTask(sessionId: number) {
+  const tasks = { ...extractTasks.value }
+  delete tasks[sessionId]
+  extractTasks.value = tasks
+}
+
+function accumulateExtractResult(resultJson: string | null) {
   try {
     const result = JSON.parse(resultJson || '{}')
     if (result.error) {
-      return { type: 'error', text: `提取未完成：${result.error}` }
+      extractBatchStats.errors.push(String(result.error))
+      return
     }
-    if (result.reason) {
-      return { type: 'success', text: `提取完成：${result.reason}` }
-    }
+    extractBatchStats.sessions += 1
+    extractBatchStats.memories += result.memories_extracted ?? 0
     const ops = result.profile_ops || {}
-    return {
-      type: 'success',
-      text: `提取完成：新增候选记忆 ${result.memories_extracted ?? 0} 条，` +
-        `画像新增 ${ops.created ?? 0} / 强化 ${ops.reinforced ?? 0} / 修正 ${ops.revised ?? 0}，` +
-        `可前往「长期记忆」和「用户理解」页面审查`,
-    }
+    extractBatchStats.created += ops.created ?? 0
+    extractBatchStats.reinforced += ops.reinforced ?? 0
+    extractBatchStats.revised += ops.revised ?? 0
   } catch {
-    return { type: 'success', text: '提取完成' }
+    extractBatchStats.sessions += 1
   }
+}
+
+function finishExtractBatch() {
+  stopExtractPolling()
+  const stats = extractBatchStats
+  extractBatchStats = { sessions: 0, memories: 0, created: 0, reinforced: 0, revised: 0, errors: [] }
+
+  if (stats.sessions === 0 && stats.errors.length === 0) return
+
+  if (stats.errors.length > 0 && stats.sessions === 0) {
+    extractNotice.value = { type: 'error', text: `提取失败：${stats.errors.join('；')}` }
+    return
+  }
+
+  let text = `完成 ${stats.sessions} 个会话提取：新增候选记忆 ${stats.memories} 条，` +
+    `画像新增 ${stats.created} / 强化 ${stats.reinforced} / 修正 ${stats.revised}，` +
+    `可前往「长期记忆」和「用户理解」页面审查`
+  if (stats.errors.length > 0) {
+    text += `（${stats.errors.length} 个失败：${stats.errors.join('；')}）`
+  }
+  extractNotice.value = { type: 'success', text }
 }
 
 function stopExtractPolling() {

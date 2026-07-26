@@ -440,6 +440,7 @@ const API_ACCESS_RULES = {
       '/api/v1/ai-artifacts/',
       '/api/v1/audit/list',
       '/api/v1/chat/sessions',
+      '/api/v1/chat/sessions/',  // 会话子路径（重命名、会话提取等）
       '/api/v1/data/backup',
       '/api/v1/data/backups/',
       '/api/v1/data/clear',
@@ -743,6 +744,27 @@ function setupIpcHandlers(): void {
     req.write(body);
     req.end();
   }
+
+  // 会话提取：Renderer 发送 sessionId + configId（不含密钥），主进程注入密钥后触发
+  ipcMain.handle(IPC_CHANNELS.CHAT_EXTRACT, async (_event, sessionId: number, configId: number) => {
+    if (!backendPort || !isBackendReady) {
+      return { code: 5001, message: '本地服务尚未就绪' };
+    }
+    try {
+      const store = loadSecureStore();
+      const apiKey = store[`model_key_${configId}`];
+      if (!apiKey) {
+        return { code: 403, message: 'API Key 未配置，请在模型设置中重新保存密钥' };
+      }
+      return await apiRequest(
+        'POST',
+        `/api/v1/chat/sessions/${sessionId}/extract`,
+        { api_key: apiKey },
+      );
+    } catch (e: any) {
+      return { code: 5001, message: e.message || '提取任务创建失败' };
+    }
+  });
 
   // 模型连接测试：Renderer 发送 configId（不含密钥），主进程注入密钥后测试
   ipcMain.handle(IPC_CHANNELS.MODEL_TEST, async (_event, configId: number) => {

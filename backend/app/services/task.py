@@ -34,7 +34,9 @@ from app.utils.logger_config import setup_logger
 logger = setup_logger(__name__)
 
 # 任务超时时间（秒）
-_TASK_TIMEOUT_SECONDS = 300
+# 必须大于单个任务最坏执行耗时，否则执行中的任务会被恢复线程重置为 retrying 并被重复领取。
+# 会话提取任务含两次后台 LLM 调用（各 SYNC_TIMEOUT_BACKGROUND=180s），故留足余量。
+_TASK_TIMEOUT_SECONDS = 900
 
 # 轮询时每次领取的最大任务数
 _CLAIM_BATCH_SIZE = 10

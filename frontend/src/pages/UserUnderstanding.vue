@@ -443,6 +443,7 @@ const categoryList = [
   { value: 'interest', label: '兴趣方向' },
   { value: 'decision_preference', label: '决策偏好' },
   { value: 'time_habit', label: '时间习惯' },
+  { value: 'life_habit', label: '生活习惯' },
   { value: 'long_term_goal', label: '长期目标' },
   { value: 'work_pattern', label: '工作模式' },
   { value: 'other', label: '其他' },
@@ -583,6 +584,7 @@ function categoryClass(cat: string): string {
     interest: 'bg-pink-100 text-pink-700',
     decision_preference: 'bg-orange-100 text-orange-700',
     time_habit: 'bg-cyan-100 text-cyan-700',
+    life_habit: 'bg-amber-100 text-amber-700',
     long_term_goal: 'bg-indigo-100 text-indigo-700',
     work_pattern: 'bg-teal-100 text-teal-700',
   }
@@ -597,6 +599,7 @@ function categoryLabel(cat: string): string {
     interest: '兴趣方向',
     decision_preference: '决策偏好',
     time_habit: '时间习惯',
+    life_habit: '生活习惯',
     long_term_goal: '长期目标',
     work_pattern: '工作模式',
     other: '其他',

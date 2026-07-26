@@ -37,6 +37,17 @@ SUPPORTED_PROVIDERS = {
 }
 
 
+# ── 同步调用超时配置（秒）────────────────────────────────────────────────
+# 非流式请求在模型生成完毕前不会返回任何字节，读超时必须覆盖"完整生成耗时"，
+# 因此按输出规模分档：标题类短输出用默认档，后台提取类长输出用长档。
+
+_SYNC_CONNECT_TIMEOUT = 10.0    # 建连/连接池等待
+_SYNC_WRITE_TIMEOUT = 30.0      # 请求体写入
+SYNC_TIMEOUT_DEFAULT = 60.0     # 默认读超时
+SYNC_TIMEOUT_SHORT = 20.0       # 在线路径短输出（会话标题）
+SYNC_TIMEOUT_BACKGROUND = 180.0  # 后台长输出（会话分析、画像演化）
+
+
 def get_supported_providers() -> dict[str, str]:
     """返回支持的供应商列表。"""
     return dict(SUPPORTED_PROVIDERS)
@@ -407,36 +418,34 @@ def chat_sync(
     api_base: str | None,
     system_prompt: str | None = None,
     messages: list[dict[str, str]] | None = None,
-) -> str | None:
+    timeout: float = SYNC_TIMEOUT_DEFAULT,
+) -> str:
     """同步对话（非流式），完整回复一次性返回，用于后台任务等场景。
 
     Args:
         provider: 模型供应商
         model_name: 模型名称
-        api_key: API Key（可为 None，此时尝试从 keystore 获取）
+        api_key: API Key
         api_base: API 地址
         system_prompt: 系统提示词
         messages: 消息列表
+        timeout: 等待模型完整生成的读超时（秒），长输出场景应放大
 
     Returns:
-        完整回复文本，失败时返回 None
-    """
-    try:
-        resolved_key = api_key
-        if not resolved_key:
-            logger.warning("chat_sync: 缺少 API Key")
-            return None
+        完整回复文本
 
-        if provider in ("openai", "openai-compatible"):
-            return _chat_sync_openai(model_name, resolved_key, api_base, messages, system_prompt)
-        elif provider == "anthropic":
-            return _chat_sync_anthropic(model_name, resolved_key, api_base, messages, system_prompt)
-        else:
-            logger.warning(f"chat_sync: 不支持的供应商: {provider}")
-            return None
-    except Exception as e:
-        logger.error(f"chat_sync 调用异常: {e!s}", exc_info=True)
-        return None
+    Raises:
+        ServiceException: 缺少 Key、供应商不支持、调用超时/失败或返回内容为空
+    """
+    if not api_key:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "缺少 API Key")
+
+    if provider in ("openai", "openai-compatible"):
+        return _chat_sync_openai(model_name, api_key, api_base, messages, system_prompt, timeout)
+    elif provider == "anthropic":
+        return _chat_sync_anthropic(model_name, api_key, api_base, messages, system_prompt, timeout)
+    else:
+        raise ServiceException(ErrorCode.PARAM_ERROR, f"不支持的供应商: {provider}")
 
 
 def _chat_sync_openai(
@@ -445,7 +454,8 @@ def _chat_sync_openai(
     api_base: str | None,
     messages: list[dict[str, str]] | None,
     system_prompt: str | None = None,
-) -> str | None:
+    timeout: float = SYNC_TIMEOUT_DEFAULT,
+) -> str:
     """OpenAI 格式同步对话。"""
     base_url = (api_base or "https://api.openai.com/v1").rstrip("/")
     url = f"{base_url}/chat/completions"
@@ -467,23 +477,18 @@ def _chat_sync_openai(
         "stream": False,
     }
 
-    try:
-        with httpx.Client(timeout=60) as client:
-            response = client.post(url, json=payload, headers=headers)
-            if response.status_code != 200:
-                err_msg = _extract_error(response)
-                logger.warning(f"chat_sync OpenAI 调用失败: {err_msg}")
-                return None
+    with httpx.Client(timeout=_build_sync_timeout(timeout)) as client:
+        result = _post_sync(client, url, payload, headers, timeout, "OpenAI").json()
 
-            result = response.json()
-            choices = result.get("choices") or []
-            if not choices:
-                logger.warning("chat_sync OpenAI 响应缺少 choices")
-                return None
-            return choices[0].get("message", {}).get("content", "")
-    except Exception as e:
-        logger.error(f"chat_sync OpenAI 异常: {e!s}", exc_info=True)
-        return None
+    choices = result.get("choices") or []
+    if not choices:
+        logger.warning("chat_sync OpenAI 响应缺少 choices")
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "模型返回内容为空")
+
+    content = choices[0].get("message", {}).get("content") or ""
+    if not content.strip():
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "模型返回内容为空")
+    return content
 
 
 def _chat_sync_anthropic(
@@ -492,7 +497,8 @@ def _chat_sync_anthropic(
     api_base: str | None,
     messages: list[dict[str, str]] | None,
     system_prompt: str | None = None,
-) -> str | None:
+    timeout: float = SYNC_TIMEOUT_DEFAULT,
+) -> str:
     """Anthropic 格式同步对话。"""
     base_url = (api_base or "https://api.anthropic.com/v1").rstrip("/")
     url = f"{base_url}/messages"
@@ -515,24 +521,60 @@ def _chat_sync_anthropic(
     if system_prompt:
         payload["system"] = system_prompt
 
-    try:
-        with httpx.Client(timeout=60) as client:
-            response = client.post(url, json=payload, headers=headers)
-            if response.status_code != 200:
-                err_msg = _extract_error(response)
-                logger.warning(f"chat_sync Anthropic 调用失败: {err_msg}")
-                return None
+    with httpx.Client(timeout=_build_sync_timeout(timeout)) as client:
+        result = _post_sync(client, url, payload, headers, timeout, "Anthropic").json()
 
-            result = response.json()
-            content_blocks = result.get("content", [])
-            full_text = ""
-            for block in content_blocks:
-                if block.get("type") == "text":
-                    full_text += block.get("text", "")
-            return full_text if full_text else None
-    except Exception as e:
-        logger.error(f"chat_sync Anthropic 异常: {e!s}", exc_info=True)
-        return None
+    full_text = ""
+    for block in result.get("content", []):
+        if block.get("type") == "text":
+            full_text += block.get("text", "")
+
+    if not full_text.strip():
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "模型返回内容为空")
+    return full_text
+
+
+def _build_sync_timeout(read_timeout: float) -> httpx.Timeout:
+    """构造同步调用的分项超时（读超时单独放大，覆盖模型完整生成耗时）。"""
+    return httpx.Timeout(
+        connect=_SYNC_CONNECT_TIMEOUT,
+        read=read_timeout,
+        write=_SYNC_WRITE_TIMEOUT,
+        pool=_SYNC_CONNECT_TIMEOUT,
+    )
+
+
+def _post_sync(
+    client: httpx.Client,
+    url: str,
+    payload: dict,
+    headers: dict[str, str],
+    timeout: float,
+    provider_label: str,
+) -> httpx.Response:
+    """发送同步对话请求，把网络层与 HTTP 错误统一转为 ServiceException。"""
+    try:
+        response = client.post(url, json=payload, headers=headers)
+    except httpx.TimeoutException as exc:
+        # 非流式请求在模型生成完成前不返回任何字节，读超时即"生成太慢"
+        logger.error(f"chat_sync {provider_label} 超时: timeout={timeout:.0f}s url={url}")
+        raise ServiceException(
+            ErrorCode.AI_SERVICE_ERROR,
+            f"模型调用超时（等待 {timeout:.0f} 秒未返回）",
+        ) from exc
+    except Exception as exc:
+        logger.error(f"chat_sync {provider_label} 请求异常: {exc!s}", exc_info=True)
+        raise ServiceException(ErrorCode.AI_SERVICE_ERROR, "模型服务连接失败") from exc
+
+    if response.status_code != 200:
+        err_msg = _extract_error(response)
+        logger.warning(f"chat_sync {provider_label} 调用失败: {err_msg}")
+        raise ServiceException(
+            ErrorCode.AI_SERVICE_ERROR,
+            f"模型调用失败（HTTP {response.status_code}）",
+        )
+
+    return response
 
 
 def _extract_error(response: httpx.Response) -> str:

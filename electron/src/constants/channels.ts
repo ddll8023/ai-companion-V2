@@ -30,6 +30,7 @@ export const IPC_CHANNELS = {
   // ── 安全 IPC（密钥由主进程注入，不经过 Renderer） ──
   /** 流式对话：Renderer 发送消息（不含 API Key），主进程注入 Key 后转发 */
   CHAT_STREAM: 'chat:stream',
+  CHAT_EXTRACT: 'chat:extract',
 
   /** 流式对话事件推送（main → renderer）：逐 token / done / error */
   CHAT_STREAM_EVENT: 'chat:stream-event',

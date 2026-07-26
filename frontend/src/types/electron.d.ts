@@ -50,6 +50,12 @@ export interface ElectronAPI {
     },
   ) => () => void
 
+  /** 触发会话级记忆画像提取（密钥由主进程从 keystore 注入） */
+  extractSession: (
+    sessionId: number,
+    configId: number,
+  ) => Promise<{ code: number; message: string; data?: unknown }>
+
   // ── 安全模型操作（密钥由主进程注入） ──
   /** 测试模型连接（密钥由主进程从 keystore 注入） */
   testModelConnection: (configId: number) => Promise<{ success: boolean; message: string }>

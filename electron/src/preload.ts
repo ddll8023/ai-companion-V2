@@ -38,6 +38,7 @@ const IPC_CHANNELS = {
   ACTIVITY_CAPTURE_STATUS: 'activity-capture:status',
   CHAT_STREAM: 'chat:stream',
   CHAT_STREAM_EVENT: 'chat:stream-event',
+  CHAT_EXTRACT: 'chat:extract',
   MODEL_TEST: 'model:test',
   MODEL_CLEAR_KEY: 'model:clear-key',
 } as const;
@@ -118,6 +119,13 @@ const api = {
       ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_EVENT, handler);
     };
   },
+
+  /** 触发会话级记忆画像提取（密钥由主进程注入，Renderer 不持有密钥） */
+  extractSession: (
+    sessionId: number,
+    configId: number,
+  ): Promise<{ code: number; message: string; data?: unknown }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.CHAT_EXTRACT, sessionId, configId),
 
   // ── 安全模型操作 ─────────────────────────────────────
   /** 测试模型连接（密钥由主进程注入） */

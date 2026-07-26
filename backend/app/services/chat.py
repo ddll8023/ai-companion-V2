@@ -462,6 +462,7 @@ def _try_auto_title(
                     api_base=active_config.api_base,
                     system_prompt=TITLE_GENERATION_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_content[:500]}],
+                    timeout=model_provider.SYNC_TIMEOUT_SHORT,
                 )
                 if summary:
                     summary = summary.strip().strip('"').strip("'")

@@ -41,11 +41,26 @@ export async function deleteSession(id: number) {
 
 // ── 会话提取 API ──────────────────────────────────────────────────────────
 
-/** 触发会话级记忆与画像提取（异步后台任务） */
-export async function extractSession(sessionId: number, apiKey?: string) {
+/**
+ * 触发会话级记忆与画像提取（异步后台任务）。
+ *
+ * - Electron 模式：走专用 IPC 通道，API Key 由主进程从 keystore 注入
+ * - 浏览器模式：走 HTTP，开发环境下随请求体传入 API Key
+ */
+export async function extractSession(
+  sessionId: number,
+  options?: { apiKey?: string; configId?: number },
+) {
+  if (typeof window !== 'undefined' && window.electronAPI?.extractSession && options?.configId) {
+    const result = await window.electronAPI.extractSession(sessionId, options.configId)
+    if (result.code !== 0) {
+      throw new Error(result.message || '提取任务创建失败')
+    }
+    return result as ApiResponse<SessionExtractResult>
+  }
   return adapter.post<SessionExtractResult>(
     `/api/v1/chat/sessions/${sessionId}/extract`,
-    { api_key: apiKey || undefined },
+    { api_key: options?.apiKey || undefined },
   )
 }
 

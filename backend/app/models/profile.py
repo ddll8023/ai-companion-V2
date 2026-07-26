@@ -28,7 +28,7 @@ class Profile(BaseModel):
         comment=(
             "画像类别: "
             "communication_preference/work_habit/learning_preference/"
-            "interest/decision_preference/time_habit/"
+            "interest/decision_preference/time_habit/life_habit/"
             "long_term_goal/work_pattern/other"
         ),
     )

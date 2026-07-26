@@ -66,6 +66,7 @@ _CATEGORY_LABELS = {
     "interest": "兴趣方向",
     "decision_preference": "决策倾向",
     "time_habit": "时间习惯",
+    "life_habit": "生活习惯",
     "long_term_goal": "长期目标",
     "work_pattern": "使用模式",
     "other": "其他特征",
@@ -420,16 +421,21 @@ def evolve_profiles(
     if active_config is None:
         return {"error": "无激活的模型配置"}
 
-    result_text = model_provider.chat_sync(
-        provider=active_config.provider,
-        model_name=active_config.model_name,
-        api_key=api_key,
-        api_base=active_config.api_base,
-        system_prompt=PROFILE_EVOLUTION_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": _build_evolution_input(db, new_summary, memories)}],
-    )
-    if not result_text:
-        return {"error": "模型返回为空"}
+    try:
+        result_text = model_provider.chat_sync(
+            provider=active_config.provider,
+            model_name=active_config.model_name,
+            api_key=api_key,
+            api_base=active_config.api_base,
+            system_prompt=PROFILE_EVOLUTION_SYSTEM_PROMPT,
+            messages=[
+                {"role": "user", "content": _build_evolution_input(db, new_summary, memories)},
+            ],
+            timeout=model_provider.SYNC_TIMEOUT_BACKGROUND,
+        )
+    except ServiceException as exc:
+        # 保留模型调用的真实失败原因（超时/连接失败/HTTP 错误），供任务错误信息使用
+        return {"error": exc.message}
 
     parsed = _parse_extraction_result(result_text)
     if parsed is None:
@@ -630,7 +636,8 @@ def _apply_create(
         confidence = op_data.get("confidence", 50)
         if not isinstance(confidence, int):
             confidence = 50
-        confidence = min(max(confidence, 0), 80 if len(evidence) > 10 else 60)
+        # 与演化提示词的置信度规则对齐：多证据最高 70，证据薄弱最高 30
+        confidence = min(max(confidence, 0), 70 if len(evidence) > 10 else 30)
 
     # 程序级兜底：禁止自动重建用户已否定的画像（prompt 标注不可信）
     if matches_rejected_profile(db, content):
