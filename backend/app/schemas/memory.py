@@ -17,7 +17,6 @@ class MemoryCreate(BaseModel):
     type: str = Field("fact", description="记忆类型: fact/preference/event/goal/habit")
     importance: int = Field(0, ge=0, le=10, description="重要性 0-10")
     session_id: int | None = Field(None, description="来源会话 ID")
-    source_version: str | None = Field(None, description="来源内容版本号")
     source_type: str = Field("message", description="来源类型: message/activity/user")
     source_ids: list[int] = Field(default_factory=list, description="来源记录 ID 列表")
     source_evidence_texts: list[str] = Field(
@@ -43,7 +42,6 @@ class MemoryResponse(BaseModel):
     importance: int
     status: str
     session_id: int | None = None
-    source_version: str | None = None
     version: int
     error_message: str | None = None
     created_at: datetime | None = None

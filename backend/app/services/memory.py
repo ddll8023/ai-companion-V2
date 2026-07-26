@@ -9,12 +9,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import math
-from datetime import datetime, date
 
-from sqlalchemy import and_, desc, func, or_, select, text
+from sqlalchemy import desc, func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.database import commit_or_rollback
@@ -30,8 +27,6 @@ from app.schemas.memory import (
     MemoryRevisionResponse,
     MemorySourceResponse,
 )
-from app.schemas.task import TaskCreate
-from app.services import task as services_task
 from app.services.audit import record_audit
 from app.services.embedding import embed_text, serialize_embedding
 from app.utils.exception import ServiceException
@@ -62,7 +57,6 @@ def create_candidate_memory(
         importance=data.importance,
         status="candidate",
         session_id=data.session_id,
-        source_version=data.source_version,
         version=1,
     )
     db.add(memory)
@@ -93,6 +87,58 @@ def create_candidate_memory(
     logger.info(f"创建候选记忆: id={memory.id}, type={data.type}")
 
     return MemoryResponse.model_validate(memory)
+
+
+def save_session_analysis(
+    db: Session,
+    session_id: int,
+    from_message_id: int,
+    to_message_id: int,
+    summary_content: str,
+    memories_data: list[dict],
+) -> list[Memory]:
+    """原子保存会话分析结果：候选记忆与会话摘要同一事务提交（摘要作为阶段完成标志）。"""
+    from app.models.conversation import SessionSummary
+
+    saved_memories: list[Memory] = []
+    for item in memories_data:
+        memory = Memory(
+            content=item["content"],
+            type=item["type"],
+            importance=item["importance"],
+            status="candidate",
+            session_id=session_id,
+            version=1,
+        )
+        db.add(memory)
+        db.flush()
+
+        source_message = db.get(Message, item["source_message_id"])
+        db.add(MemorySource(
+            memory_id=memory.id,
+            source_type="message",
+            source_id=item["source_message_id"],
+            content_preview=(
+                source_message.content[:200]
+                if source_message is not None
+                else item["content"][:200]
+            ),
+            evidence_text=item["evidence"][:512],
+        ))
+        saved_memories.append(memory)
+
+    db.add(SessionSummary(
+        session_id=session_id,
+        from_message_id=from_message_id,
+        to_message_id=to_message_id,
+        content=summary_content,
+    ))
+    commit_or_rollback(db)
+    logger.info(
+        f"会话分析结果已保存: session_id={session_id}, "
+        f"memories={len(saved_memories)}, range=[{from_message_id}, {to_message_id}]",
+    )
+    return saved_memories
 
 
 def query_memories(
@@ -192,9 +238,6 @@ def confirm_memory(db: Session, memory_id: int) -> MemoryResponse:
         summary=f"确认记忆: {memory.content[:100]}",
     )
 
-    # 记忆确认后自动触发画像提取（非阻塞，日级别去重）
-    _trigger_profile_extract(db)
-
     return MemoryResponse.model_validate(memory)
 
 
@@ -243,9 +286,6 @@ def correct_memory(db: Session, memory_id: int, data: MemoryCorrect) -> MemoryRe
         target_id=memory_id,
         summary=f"纠正记忆 (v{memory.version})",
     )
-
-    # 记忆纠正后自动触发画像提取（非阻塞，日级别去重）
-    _trigger_profile_extract(db)
 
     return MemoryResponse.model_validate(memory)
 
@@ -313,57 +353,6 @@ def delete_memory(db: Session, memory_id: int) -> None:
     db.delete(memory)
     commit_or_rollback(db)
     logger.info(f"删除记忆: id={memory_id}")
-
-
-def check_source_valid(
-    db: Session,
-    session_id: int | None,
-    source_version: str | None,
-    source_ids: list[int],
-) -> bool:
-    """检查记忆来源是否仍然有效。
-
-    如果来源消息已被删除或内容版本不匹配，返回 False。
-    调用方应据此决定是否继续生成记忆。
-
-    Args:
-        db: 数据库会话
-        session_id: 来源会话 ID
-        source_version: 来源内容版本号。格式为 "md5_<hex>"，执行时重新计算消息内容
-            的 MD5 进行比对。不以 "md5_" 开头时跳过内容校验（向后兼容）。
-        source_ids: 来源消息 ID 列表
-
-    Returns:
-        True 表示来源有效，False 表示来源已失效
-    """
-    if not source_ids:
-        return True
-
-    existing = db.scalars(
-        select(Message).where(Message.id.in_(source_ids))
-    ).all()
-
-    # 检查消息数量是否匹配（消息是否被删除）
-    if len(existing) != len(source_ids):
-        return False
-
-    # 如果 source_version 以 "md5_" 开头，校验内容是否被修改
-    if source_version and source_version.startswith("md5_"):
-        stored_hash = source_version[4:]  # 去掉 "md5_" 前缀
-        # 按 source_ids 的顺序拼接消息内容
-        existing.sort(key=lambda m: m.id)
-        content_parts = []
-        for msg in existing:
-            content_parts.append(msg.content or "")
-        current_md5 = hashlib.md5("|".join(content_parts).encode("utf-8")).hexdigest()
-        if current_md5 != stored_hash:
-            logger.info(
-                f"来源内容已变更: source_version={source_version}, "
-                f"current_md5={current_md5}, ids={source_ids}"
-            )
-            return False
-
-    return True
 
 
 # ── FTS5 索引同步 ────────────────────────────────────────────────────────────
@@ -490,33 +479,6 @@ def save_memory_references(
         logger.info(f"保存记忆引用: message_id={message_id}, count={count}")
 
     return count
-
-
-# ── 画像提取自动触发 ────────────────────────────────────────────────────
-
-
-def _trigger_profile_extract(db: Session) -> None:
-    """记忆确认/纠正后自动触发画像提取。
-
-    使用日级别去重键，确保同一天最多触发一次。
-    任务创建失败不影响主流程。
-    """
-    try:
-        today = date.today().isoformat()  # "2026-07-23"
-        dedup_key = f"profile.extract:daily:{today}"
-
-        payload = {"memory_ids": None}
-        task_data = TaskCreate(
-            task_type="profile.extract",
-            payload=json.dumps(payload),
-            dedup_key=dedup_key,
-            priority=0,
-        )
-        services_task.create_task(db, task_data)
-        logger.debug(f"创建画像提取任务（日级别去重）: dedup_key={dedup_key}")
-    except Exception as e:
-        # 非阻塞：任务创建失败不影响记忆确认/纠正主流程
-        logger.warning(f"创建画像提取任务失败（可忽略）: {e!s}")
 
 
 # ── 内部方法 ────────────────────────────────────────────────────────────────

@@ -15,7 +15,6 @@ class TaskCreate(BaseModel):
     dedup_key: str | None = Field(None, max_length=128, description="去重键")
     priority: int = Field(0, ge=0, description="优先级，数值越大越优先")
     max_retries: int = Field(3, ge=0, le=10, description="最大重试次数")
-    source_version: str | None = Field(None, max_length=64, description="来源内容版本号")
     scheduled_at: datetime | None = Field(None, description="计划执行时间（留空则立即执行）")
 
 
@@ -30,7 +29,6 @@ class TaskResponse(BaseModel):
     priority: int = 0
     retry_count: int = 0
     max_retries: int = 3
-    source_version: str | None = None
     error_message: str | None = None
     result: str | None = None
     scheduled_at: datetime | None = None

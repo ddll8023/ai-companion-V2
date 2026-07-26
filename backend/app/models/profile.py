@@ -48,7 +48,12 @@ class Profile(BaseModel):
         comment="是否自动提取: False=手动, True=LLM 自动提取",
     )
     version = Column(Integer, nullable=False, default=1, comment="版本号，纠正后递增")
-    source_version = Column(String(64), nullable=True, comment="来源记忆版本号")
+    supersedes_profile_id = Column(
+        Integer,
+        ForeignKey("profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        comment="候选修订版指向的被修订画像 ID（确认后旧画像自动转 rejected）",
+    )
     error_message = Column(String(256), nullable=True, comment="错误信息（提取失败时记录）")
 
     def __repr__(self):

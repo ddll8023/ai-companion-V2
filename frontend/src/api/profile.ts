@@ -50,8 +50,18 @@ export async function deleteProfile(id: number) {
 }
 
 /** 提取画像（从已确认记忆中） */
+/** 画像演化结果统计 */
+export interface ProfileEvolveResult {
+  created?: number
+  reinforced?: number
+  revised?: number
+  skipped?: number
+  reason?: string
+  error?: string
+}
+
 export async function extractProfiles() {
-  return api.post<{ result: string }>('/api/v1/profiles/extract')
+  return api.post<{ result: ProfileEvolveResult }>('/api/v1/profiles/extract')
 }
 
 /** 获取行为统计 */

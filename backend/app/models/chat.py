@@ -19,6 +19,12 @@ class ChatSession(BaseModel):
     title = Column(String(128), nullable=False, default="新对话", comment="会话标题")
     model_name = Column(String(128), nullable=True, comment="使用的模型名称")
     model_provider = Column(String(32), nullable=True, comment="使用的模型供应商")
+    last_extracted_message_id = Column(
+        Integer, nullable=True, comment="提取水位线：最后一条已提取消息 ID",
+    )
+    last_extracted_at = Column(
+        DateTime, nullable=True, comment="最近一次记忆画像提取完成时间",
+    )
 
     __table_args__ = (
         Index("ix_sessions_updated_at", "updated_at"),

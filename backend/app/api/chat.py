@@ -15,7 +15,14 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.schemas.chat import ChatRequest, MessageResponse, SessionCreate, SessionResponse, SessionUpdate
+from app.schemas.chat import (
+    ChatRequest,
+    MessageResponse,
+    SessionCreate,
+    SessionExtractRequest,
+    SessionResponse,
+    SessionUpdate,
+)
 from app.schemas.common import ApiResponse, ErrorCode
 from app.schemas.response import error, success
 from app.services import chat as services_chat
@@ -93,6 +100,25 @@ def delete_session(
     try:
         services_chat.delete_session(db, session_id)
         return success(message="会话已删除")
+    except ServiceException as e:
+        return error(code=e.code, message=e.message)
+
+
+# ── 会话级提取 ──────────────────────────────────────────────────────────────
+
+
+@router.post("/sessions/{session_id}/extract", response_model=ApiResponse[dict])
+def extract_session(
+    session_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    body: SessionExtractRequest | None = None,
+):
+    """触发会话级记忆与画像提取（异步后台任务，返回任务 ID 供轮询）。"""
+    try:
+        result = services_chat.request_session_extract(
+            db, session_id, body.api_key if body else None,
+        )
+        return success(data=result)
     except ServiceException as e:
         return error(code=e.code, message=e.message)
 

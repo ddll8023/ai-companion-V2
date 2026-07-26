@@ -82,6 +82,39 @@
         <span v-if="currentSession.model_name" class="text-xs text-text-tertiary flex-shrink-0">
           {{ currentSession.model_name }}
         </span>
+        <!-- 会话提取按钮 -->
+        <button
+          class="ml-auto flex-shrink-0 flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg border border-border text-text-secondary hover:text-primary hover:border-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:text-text-secondary disabled:hover:border-border"
+          :disabled="!canExtract"
+          :title="extractButtonTitle"
+          @click="handleExtract"
+        >
+          <font-awesome-icon
+            :icon="['fas', extractInProgress ? 'spinner' : 'wand-magic-sparkles']"
+            :class="extractInProgress ? 'animate-spin' : ''"
+            class="text-xs"
+          />
+          {{ extractInProgress ? '提取中…' : '提取记忆与画像' }}
+        </button>
+      </div>
+
+      <!-- 提取结果提示条 -->
+      <div
+        v-if="extractNotice"
+        class="flex items-center gap-2 px-6 py-2 text-xs border-b border-border"
+        :class="extractNotice.type === 'success' ? 'text-success bg-success/5' : 'text-error bg-error/5'"
+      >
+        <font-awesome-icon
+          :icon="['fas', extractNotice.type === 'success' ? 'circle-check' : 'circle-exclamation']"
+        />
+        <span class="flex-1">{{ extractNotice.text }}</span>
+        <button
+          class="text-text-tertiary hover:text-text transition-colors"
+          title="关闭提示"
+          @click="extractNotice = null"
+        >
+          <font-awesome-icon :icon="['fas', 'xmark']" />
+        </button>
       </div>
 
       <!-- 欢迎/没有会话时 -->
@@ -351,6 +384,10 @@ const showDeleteDialog = ref(false)
 const deleteTarget = ref<Session | null>(null)
 const deletingSessionId = ref<number | null>(null)
 
+const isExtracting = ref(false)
+const extractNotice = ref<{ type: 'success' | 'error'; text: string } | null>(null)
+let extractPollTimer: number | null = null
+
 const messagesContainer = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 
@@ -389,6 +426,22 @@ const canChat = computed(() => {
 
 const canSend = computed(() => {
   return inputText.value.trim().length > 0 && !isGenerating.value
+})
+
+const extractInProgress = computed(() => {
+  return isExtracting.value || !!currentSession.value?.is_extracting
+})
+
+const canExtract = computed(() => {
+  const sess = currentSession.value
+  if (!sess || isGenerating.value || extractInProgress.value) return false
+  return (sess.extractable_message_count ?? 0) > 0
+})
+
+const extractButtonTitle = computed(() => {
+  if (extractInProgress.value) return '正在提取记忆与画像'
+  if ((currentSession.value?.extractable_message_count ?? 0) === 0) return '暂无可提取的新对话'
+  return '对当前会话的新增对话提取记忆与画像'
 })
 
 // ── 生命周期 ──────────────────────────────────────────────────────────────
@@ -466,6 +519,7 @@ async function switchSession(sessionId: number) {
   currentSessionId.value = sessionId
   streamingContent.value = ''
   streamingReasoning.value = ''
+  extractNotice.value = null
   await fetchMessages()
   await nextTick()
   focusInput()
@@ -608,10 +662,6 @@ function handleStreamEvent(event: ChatStreamEvent) {
       isGenerating.value = false
       scrollToBottom()
       break
-
-    case 'user_saved':
-      // 用户消息已保存到后端，更新其实际 ID
-      break
   }
 }
 
@@ -641,6 +691,90 @@ function handleStop() {
   isGenerating.value = false
   errorMessage.value = null
   focusInput()
+}
+
+// ── 会话提取 ──────────────────────────────────────────────────────────────
+
+async function handleExtract() {
+  if (!currentSessionId.value || !canExtract.value) return
+  extractNotice.value = null
+  isExtracting.value = true
+
+  // 浏览器开发模式随请求传入 API Key；Electron 模式由后端全局缓存回退
+  let apiKey: string | undefined
+  try {
+    if (import.meta.env.DEV && activeConfig.value) {
+      apiKey = localStorage.getItem(`model_key_${activeConfig.value.id}`) || undefined
+    }
+  } catch {
+    // localStorage 不可用时忽略
+  }
+
+  try {
+    const res = await chatApi.extractSession(currentSessionId.value, apiKey)
+    pollExtractTask(res.data!.task_id)
+  } catch (e: unknown) {
+    isExtracting.value = false
+    extractNotice.value = {
+      type: 'error',
+      text: e instanceof Error ? e.message : '提取任务创建失败',
+    }
+  }
+}
+
+function pollExtractTask(taskId: number) {
+  stopExtractPolling()
+  extractPollTimer = window.setInterval(async () => {
+    try {
+      const res = await chatApi.getExtractTask(taskId)
+      const task = res.data
+      if (!task) return
+      if (task.status === 'completed') {
+        stopExtractPolling()
+        isExtracting.value = false
+        extractNotice.value = parseExtractResult(task.result)
+        await fetchSessions()
+      } else if (task.status === 'failed' || task.status === 'cancelled') {
+        stopExtractPolling()
+        isExtracting.value = false
+        extractNotice.value = {
+          type: 'error',
+          text: task.error_message || '提取任务失败',
+        }
+        await fetchSessions()
+      }
+    } catch {
+      // 单次轮询失败不中断，等待下一轮
+    }
+  }, 2000)
+}
+
+function parseExtractResult(resultJson: string | null): { type: 'success' | 'error'; text: string } {
+  try {
+    const result = JSON.parse(resultJson || '{}')
+    if (result.error) {
+      return { type: 'error', text: `提取未完成：${result.error}` }
+    }
+    if (result.reason) {
+      return { type: 'success', text: `提取完成：${result.reason}` }
+    }
+    const ops = result.profile_ops || {}
+    return {
+      type: 'success',
+      text: `提取完成：新增候选记忆 ${result.memories_extracted ?? 0} 条，` +
+        `画像新增 ${ops.created ?? 0} / 强化 ${ops.reinforced ?? 0} / 修正 ${ops.revised ?? 0}，` +
+        `可前往「长期记忆」和「用户理解」页面审查`,
+    }
+  } catch {
+    return { type: 'success', text: '提取完成' }
+  }
+}
+
+function stopExtractPolling() {
+  if (extractPollTimer !== null) {
+    clearInterval(extractPollTimer)
+    extractPollTimer = null
+  }
 }
 
 async function saveAiContent(message: Message) {
@@ -708,6 +842,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   document.removeEventListener('keydown', handleKeydown)
+  stopExtractPolling()
 })
 </script>
 

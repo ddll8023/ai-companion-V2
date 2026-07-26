@@ -31,10 +31,20 @@ class SessionResponse(BaseModel):
     title: str
     model_name: str | None = None
     model_provider: str | None = None
+    last_extracted_message_id: int | None = None
+    last_extracted_at: datetime | None = None
+    extractable_message_count: int = Field(0, description="水位线之后可提取的用户消息数")
+    is_extracting: bool = Field(False, description="是否存在进行中的提取任务")
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SessionExtractRequest(BaseModel):
+    """会话提取请求。"""
+
+    api_key: str | None = Field(None, description="API Key（浏览器模式需要传入，Electron 模式回退全局缓存）")
 
 
 # ── 消息 Schema ────────────────────────────────────────────────────────────

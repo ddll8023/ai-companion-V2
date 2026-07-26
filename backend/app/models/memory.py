@@ -46,9 +46,6 @@ class Memory(BaseModel):
         index=True,
         comment="来源会话 ID（可选）",
     )
-    source_version = Column(
-        String(64), nullable=True, comment="来源内容版本号，用于校验内容是否过时",
-    )
     version = Column(
         Integer, nullable=False, default=1, comment="版本号，用户纠正后递增",
     )

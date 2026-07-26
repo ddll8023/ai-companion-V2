@@ -32,8 +32,11 @@ _VERSION_TABLE = "_db_version"
 #   v10 — 添加: model_configs.enable_reasoning（推理展示开关）
 #   v11 — 添加: memory_sources.evidence_text（用户原文证据）
 #   v12 — 添加: conversation_turns/session_summaries/ai_artifacts（内容治理）
+#   v13 — 会话级提取重构: sessions 水位线字段、session_summaries 改消息区间、
+#         profiles.supersedes_profile_id；删除 memories/profiles/background_tasks
+#         的 source_version 列（结构变更，删除旧库重建，无迁移函数）
 #
-_CURRENT_VERSION: int = 12
+_CURRENT_VERSION: int = 13
 
 
 def _ensure_version_table(db: Session):

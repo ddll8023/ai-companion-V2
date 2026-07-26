@@ -77,8 +77,28 @@ export interface Session {
   id: number
   title: string
   model_name: string | null
+  last_extracted_message_id?: number | null
+  last_extracted_at?: string | null
+  extractable_message_count?: number
+  is_extracting?: boolean
   created_at: string | null
   updated_at: string | null
+}
+
+/** 会话提取任务创建结果 */
+export interface SessionExtractResult {
+  task_id: number
+  from_message_id: number
+  to_message_id: number
+}
+
+/** 后台任务信息（提取任务轮询用） */
+export interface BackgroundTaskInfo {
+  id: number
+  task_type: string
+  status: 'pending' | 'processing' | 'retrying' | 'completed' | 'failed' | 'cancelled'
+  result: string | null
+  error_message: string | null
 }
 
 /** 创建会话请求 */
@@ -125,7 +145,7 @@ export interface ChatRequest {
 
 /** 流式对话事件 */
 export interface ChatStreamEvent {
-  type: 'token' | 'reasoning_token' | 'done' | 'error' | 'user_saved'
+  type: 'token' | 'reasoning_token' | 'done' | 'error'
   content?: string
   message_id?: number
   message?: string
@@ -152,7 +172,6 @@ export interface Memory {
   importance: number
   status: 'candidate' | 'confirmed' | 'corrected' | 'rejected' | 'deleted'
   session_id: number | null
-  source_version: string | null
   version: number
   error_message: string | null
   created_at: string | null
@@ -165,7 +184,6 @@ export interface MemoryCreate {
   type?: string
   importance?: number
   session_id?: number | null
-  source_version?: string | null
   source_type?: string
   source_ids?: number[]
 }
@@ -463,7 +481,6 @@ export interface Profile {
   status: 'candidate' | 'confirmed' | 'corrected' | 'rejected' | 'deleted'
   is_auto_extracted: number
   version: number
-  source_version: string | null
   error_message: string | null
   created_at: string | null
   updated_at: string | null
@@ -524,11 +541,6 @@ export interface ProfileListQuery {
   is_auto_extracted?: number
   page?: number
   page_size?: number
-}
-
-/** 画像提取请求（当前无需参数，预留位置） */
-export interface ProfileExtractRequest {
-  // 当前为空，API Key 由后端进程内存缓存管理
 }
 
 /** 行为统计查询参数 */

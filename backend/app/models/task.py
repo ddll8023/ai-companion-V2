@@ -28,7 +28,6 @@ class BackgroundTask(BaseModel):
     priority = Column(Integer, nullable=False, default=0, comment="优先级，数值越大越优先")
     retry_count = Column(Integer, nullable=False, default=0, comment="已重试次数")
     max_retries = Column(Integer, nullable=False, default=3, comment="最大重试次数")
-    source_version = Column(String(64), nullable=True, comment="来源内容版本号，用于校验内容是否过时")
     error_message = Column(Text, nullable=True, comment="错误信息")
     result = Column(Text, nullable=True, comment="执行结果（JSON 字符串）")
     scheduled_at = Column(

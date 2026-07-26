@@ -12,11 +12,10 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import Any, Generator
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core import api_key_cache
@@ -34,6 +33,7 @@ from app.schemas.reference import MemoryReferenceResponse
 from app.schemas.common import ErrorCode
 from app.schemas.task import TaskCreate
 from app.services import model_provider
+from app.services import profile as services_profile
 from app.services import retrieval
 from app.services import task as services_task
 from app.services.audit import record_audit
@@ -56,17 +56,17 @@ def create_session(db: Session, data: SessionCreate | None = None) -> SessionRes
 
 
 def list_sessions(db: Session) -> list[SessionResponse]:
-    """获取全部会话列表（按更新时间倒序）。"""
+    """获取全部会话列表（按更新时间倒序，附带提取状态）。"""
     items = db.scalars(
         select(ChatSession).order_by(desc(ChatSession.updated_at))
     ).all()
-    return [SessionResponse.model_validate(item) for item in items]
+    return [_build_session_response(db, item) for item in items]
 
 
 def get_session(db: Session, session_id: int) -> SessionResponse:
-    """获取单个会话详情。"""
+    """获取单个会话详情（附带提取状态）。"""
     session = _get_session_or_error(db, session_id)
-    return SessionResponse.model_validate(session)
+    return _build_session_response(db, session)
 
 
 def update_session(db: Session, session_id: int, data: SessionUpdate) -> SessionResponse:
@@ -288,8 +288,11 @@ def initialize_chat_stream(
         query_text=user_content,
     )
 
-    # 构造系统提示词（包含检索到的记忆和推理展示偏好）
+    # 构造系统提示词（画像段落在前，检索记忆段落在后）
     base_system_prompt = build_chat_system_prompt(active_config.enable_reasoning)
+    profile_context = services_profile.build_profile_context(db)
+    if profile_context:
+        base_system_prompt = f"{base_system_prompt}\n\n{profile_context}"
     if memory_context and memory_context.enabled:
         system_prompt = retrieval.build_system_prompt_with_context(
             base_prompt=base_system_prompt,
@@ -347,11 +350,8 @@ def run_chat_stream(
     collected_content = ""
     collected_reasoning = ""
 
-    # 将 API Key 存入进程内存缓存（供后台任务使用），不持久化到 SQLite
-    api_key_cache_key = f"chat_{assistant_msg_id}"
+    # 将 API Key 写入全局内存缓存（供会话提取等后台任务使用），不持久化到 SQLite
     if api_key:
-        api_key_cache.store(api_key_cache_key, api_key)
-        # 同时写入全局缓存（供画像提取等后台任务使用）
         api_key_cache.store_global(api_key)
 
     try:
@@ -380,12 +380,7 @@ def run_chat_stream(
             )
 
         with get_background_db_session() as db:
-            # 第2步：创建候选记忆提取后台任务
-            _try_create_memory_extract_task(
-                db, session_id, assistant_msg_id, collected_content,
-            )
-
-            # 第3步：保存记忆引用记录（与第2步在同一 session 中）
+            # 第2步：保存记忆引用记录
             if memory_context and memory_context.enabled:
                 try:
                     from app.services.memory import save_memory_references
@@ -409,8 +404,6 @@ def run_chat_stream(
                 )
             else:
                 _fail_assistant_message(db, assistant_msg_id, "用户中止")
-        # 清理 API Key 缓存
-        api_key_cache.pop(api_key_cache_key)
         raise
 
     except ServiceException as e:
@@ -422,7 +415,6 @@ def run_chat_stream(
                 )
             else:
                 _fail_assistant_message(db, assistant_msg_id, e.message)
-        api_key_cache.pop(api_key_cache_key)
         yield {"type": "error", "message": e.message}
     except Exception as e:
         logger.error(f"对话流式调用异常: {e}", exc_info=True)
@@ -434,7 +426,6 @@ def run_chat_stream(
                 )
             else:
                 _fail_assistant_message(db, assistant_msg_id, str(e))
-        api_key_cache.pop(api_key_cache_key)
         yield {"type": "error", "message": f"对话生成失败: {e!s}"}
 
 
@@ -491,68 +482,115 @@ def _try_auto_title(
     commit_or_rollback(db)
 
 
+# ── 会话级提取 ──────────────────────────────────────────────────────────────
+
+
+def request_session_extract(db: Session, session_id: int, api_key: str | None) -> dict:
+    """校验并创建会话级记忆画像提取后台任务。"""
+    session = _get_session_or_error(db, session_id)
+
+    # API Key：优先请求传入，回退到全局缓存（Electron 模式对话后可用）
+    resolved_key = api_key or api_key_cache.peek_global()
+    if not resolved_key:
+        raise ServiceException(
+            ErrorCode.PARAM_ERROR,
+            "缺少 API Key（请先进行一次对话或在请求中提供）",
+        )
+
+    # 生成中的会话不允许提取
+    generating = db.scalar(
+        select(Message).where(
+            Message.session_id == session_id,
+            Message.status == "generating",
+        ).limit(1)
+    )
+    if generating is not None:
+        raise ServiceException(
+            ErrorCode.PARAM_ERROR, "会话正在生成回复，请等待完成后再提取",
+        )
+
+    # 同一会话同时只允许一个提取任务
+    dedup_key = f"session.extract:session:{session_id}"
+    active = services_task.find_active_task(db, "session.extract", dedup_key)
+    if active is not None:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "该会话已有正在进行的提取任务")
+
+    # 计算提取区间：水位线之后的 completed 消息
+    watermark = session.last_extracted_message_id or 0
+    range_row = db.execute(
+        select(func.min(Message.id), func.max(Message.id)).where(
+            Message.session_id == session_id,
+            Message.id > watermark,
+            Message.status == "completed",
+            Message.role.in_(["user", "assistant"]),
+        )
+    ).first()
+    from_message_id, to_message_id = range_row if range_row else (None, None)
+
+    has_user_message = db.scalar(
+        select(Message).where(
+            Message.session_id == session_id,
+            Message.id > watermark,
+            Message.role == "user",
+            Message.status == "completed",
+        ).limit(1)
+    )
+    if from_message_id is None or has_user_message is None:
+        raise ServiceException(ErrorCode.PARAM_ERROR, "没有可提取的新对话内容")
+
+    # API Key 写入全局缓存供后台任务使用
+    api_key_cache.store_global(resolved_key)
+
+    task = services_task.create_task(db, TaskCreate(
+        task_type="session.extract",
+        payload=json.dumps({
+            "session_id": session_id,
+            "from_message_id": from_message_id,
+            "to_message_id": to_message_id,
+        }),
+        dedup_key=dedup_key,
+        priority=1,
+    ))
+
+    record_audit(
+        db=db,
+        action="chat.session.extract",
+        target_type="session",
+        target_id=session_id,
+        summary=f"触发会话提取: 消息区间 [{from_message_id}, {to_message_id}]",
+    )
+    logger.info(f"创建会话提取任务: session_id={session_id}, task_id={task.id}")
+
+    return {
+        "task_id": task.id,
+        "from_message_id": from_message_id,
+        "to_message_id": to_message_id,
+    }
+
+
 # ── 内部方法 ────────────────────────────────────────────────────────────────
 
 
-def _try_create_memory_extract_task(
-    db: Session,
-    session_id: int,
-    assistant_message_id: int,
-    assistant_content: str,
-) -> None:
-    """对话完成后创建候选记忆提取后台任务。
+def _build_session_response(db: Session, session: ChatSession) -> SessionResponse:
+    """构建会话响应，附带可提取消息数与提取任务状态。"""
+    resp = SessionResponse.model_validate(session)
 
-    这是一个非阻塞操作。任务创建失败不影响对话主流程。
-
-    Args:
-        db: 数据库会话
-        session_id: 会话 ID
-        assistant_message_id: 助手消息 ID
-        assistant_content: 助手回复内容（当前保留参数以兼容调用；不作为用户事实来源）
-    """
-    try:
-        # 查找该会话最新的一条用户消息作为来源
-        user_msg = db.scalar(
-            select(Message)
-            .where(
-                Message.session_id == session_id,
+    watermark = session.last_extracted_message_id or 0
+    resp.extractable_message_count = db.scalar(
+        select(func.count()).select_from(
+            select(Message).where(
+                Message.session_id == session.id,
+                Message.id > watermark,
                 Message.role == "user",
                 Message.status == "completed",
-            )
-            .order_by(desc(Message.id))
-            .limit(1)
+            ).subquery()
         )
-        if user_msg is None:
-            logger.warning(f"记忆提取任务创建: 未找到用户消息, session_id={session_id}")
-            return
+    ) or 0
 
-        # 仅使用用户消息生成来源版本。助手回复不能作为用户事实证据。
-        content_md5 = hashlib.md5(
-            user_msg.content.encode("utf-8")
-        ).hexdigest()
-
-        payload = {
-            "session_id": session_id,
-            "user_message_id": user_msg.id,
-            "assistant_message_id": assistant_message_id,
-            "source_version": f"md5_{content_md5}",
-        }
-
-        task_data = TaskCreate(
-            task_type="memory.extract",
-            payload=json.dumps(payload),
-            dedup_key=f"memory.extract:session:{session_id}:msg:{assistant_message_id}",
-            priority=0,
-            source_version=f"md5_{content_md5}",
-        )
-        services_task.create_task(db, task_data)
-        logger.info(f"创建记忆提取任务: session_id={session_id}")
-    except Exception as e:
-        # 任务创建失败不影响对话主流程
-        logger.warning(f"创建记忆提取任务失败: {e!s}")
-
-
-# ── 内部方法 ────────────────────────────────────────────────────────────────
+    resp.is_extracting = services_task.find_active_task(
+        db, "session.extract", f"session.extract:session:{session.id}",
+    ) is not None
+    return resp
 
 
 def _get_session_or_error(db: Session, session_id: int) -> ChatSession:

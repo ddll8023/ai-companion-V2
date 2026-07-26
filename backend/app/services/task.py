@@ -57,7 +57,6 @@ def create_task(db: Session, data: TaskCreate) -> TaskResponse:
         dedup_key=data.dedup_key,
         priority=data.priority,
         max_retries=data.max_retries,
-        source_version=data.source_version,
         scheduled_at=data.scheduled_at or datetime.now(),
     )
     db.add(task)
@@ -244,6 +243,12 @@ def get_task(db: Session, task_id: int) -> TaskResponse:
     if task is None:
         raise ServiceException(ErrorCode.DATA_NOT_FOUND, f"任务不存在: {task_id}")
     return TaskResponse.model_validate(task)
+
+
+def find_active_task(db: Session, task_type: str, dedup_key: str) -> TaskResponse | None:
+    """查找同类型同去重键且未处于终态的任务，不存在时返回 None。"""
+    task = _find_duplicate(db, task_type, dedup_key)
+    return TaskResponse.model_validate(task) if task is not None else None
 
 
 def get_pending_count(db: Session) -> int:

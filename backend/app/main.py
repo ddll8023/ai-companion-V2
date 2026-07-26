@@ -52,8 +52,7 @@ async def lifespan(app: FastAPI):
     # 数据库就绪后启动后台任务调度器
     if app_state.db_ready:
         try:
-            from app.tasks import memory_extract  # 注册记忆提取任务处理器
-            from app.tasks import profile_extract  # 注册画像提取任务处理器
+            from app.tasks import session_extract  # 注册会话级提取任务处理器
             from app.tasks.scheduler import TaskScheduler
             app_state.task_scheduler = TaskScheduler(poll_interval=2.0, recovery_interval=60.0)
             app_state.task_scheduler.start()

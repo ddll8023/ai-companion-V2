@@ -4,7 +4,8 @@
 - 管理画像 CRUD
 - 处理用户审查操作（确认、纠正、否定、删除）
 - 管理来源证据和修订历史
-- 画像去重校验
+- 画像演化：执行 LLM 输出的 CREATE/REINFORCE/REVISE 操作指令
+- 画像上下文组装（注入对话系统提示词）
 """
 
 from __future__ import annotations
@@ -15,16 +16,18 @@ import re
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
 
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
 
 from app.core.database import commit_or_rollback
 from app.models.activity import Activity
 from app.models.chat import Message
+from app.models.memory import Memory
 from app.models.profile import Profile, ProfileRevision, ProfileSource
-from app.prompts.profile import PROFILE_EXTRACTION_SYSTEM_PROMPT
+from app.prompts.profile import PROFILE_EVOLUTION_SYSTEM_PROMPT
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.schemas.profile import (
+    PROFILE_CATEGORIES,
     BehaviorStatsResponse,
     ProfileCorrect,
     ProfileCreate,
@@ -40,12 +43,33 @@ from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
 
-# 候选画像过期天数
-CANDIDATE_EXPIRE_DAYS = 7
-
 # 不同记忆批次中，模型常会用略有不同的措辞重复表达同一画像。
 # 阈值保守设置，避免把同类但实际不同的偏好合并掉。
 _CROSS_SOURCE_DUPLICATE_THRESHOLD = 0.88
+
+# REINFORCE 操作的置信度步进与上限
+_REINFORCE_STEP = 10
+_REINFORCE_CAP = 95
+
+# CREATE 操作的画像正文长度上限
+_PROFILE_CONTENT_MAX_CHARS = 200
+
+# 画像注入对话的 token 预算与字符换算系数（与检索模块保持一致）
+_PROFILE_CONTEXT_TOKEN_BUDGET = 800
+_AVG_TOKEN_PER_CHAR = 1.5
+
+# 画像类别中文标签（注入对话与前端展示语义一致）
+_CATEGORY_LABELS = {
+    "communication_preference": "沟通偏好",
+    "work_habit": "工作习惯",
+    "learning_preference": "学习偏好",
+    "interest": "兴趣方向",
+    "decision_preference": "决策倾向",
+    "time_habit": "时间习惯",
+    "long_term_goal": "长期目标",
+    "work_pattern": "使用模式",
+    "other": "其他特征",
+}
 
 
 # ========== 公共入口函数 ==========
@@ -65,14 +89,16 @@ def create_candidate_profile(
         confidence=data.confidence,
         status="candidate",
         is_auto_extracted=data.is_auto_extracted,
-        source_version=data.source_version,
+        supersedes_profile_id=data.supersedes_profile_id,
         version=1,
     )
     db.add(profile)
     commit_or_rollback(db)
 
-    # 保存来源证据
-    for idx, memory_id in enumerate(data.memory_ids):
+    # 保存来源证据（无关联记忆时也保留证据文本，避免证据链丢失）
+    source_count = max(len(data.memory_ids), len(data.evidence_texts))
+    for idx in range(source_count):
+        memory_id = data.memory_ids[idx] if idx < len(data.memory_ids) else None
         evidence = (
             data.evidence_texts[idx]
             if idx < len(data.evidence_texts)
@@ -166,6 +192,7 @@ def confirm_profile(db: Session, profile_id: int) -> ProfileResponse:
     """确认候选画像。
 
     将状态更新为 confirmed。
+    若该画像是候选修订版（supersedes_profile_id 非空），被修订的旧画像自动转为 rejected。
     """
     profile = _get_profile_or_error(db, profile_id)
 
@@ -176,6 +203,19 @@ def confirm_profile(db: Session, profile_id: int) -> ProfileResponse:
         )
 
     profile.status = "confirmed"
+
+    # 候选修订版被确认 → 旧画像自动否定，避免新旧两版并存注入对话
+    if profile.supersedes_profile_id:
+        old_profile = db.get(Profile, profile.supersedes_profile_id)
+        if old_profile is not None and old_profile.status in (
+            "candidate", "confirmed", "corrected",
+        ):
+            old_profile.status = "rejected"
+            logger.info(
+                f"确认修订版画像: id={profile_id}, "
+                f"旧画像 id={old_profile.id} 已自动转 rejected",
+            )
+
     commit_or_rollback(db)
     logger.info(f"确认画像: id={profile_id}")
 
@@ -290,35 +330,6 @@ def delete_profile(db: Session, profile_id: int) -> None:
     logger.info(f"删除画像: id={profile_id}")
 
 
-def expire_old_candidates(db: Session) -> int:
-    """过期未确认的候选画像。
-
-    超过 CANDIDATE_EXPIRE_DAYS 的候选画像自动转为 rejected。
-    由后台定时任务调用。
-
-    Returns:
-        处理的记录数
-    """
-    cutoff = datetime.now() - timedelta(days=CANDIDATE_EXPIRE_DAYS)
-    items = db.scalars(
-        select(Profile).where(
-            Profile.status == "candidate",
-            Profile.created_at < cutoff,
-        )
-    ).all()
-
-    count = 0
-    for p in items:
-        p.status = "rejected"
-        count += 1
-
-    if count:
-        commit_or_rollback(db)
-        logger.info(f"过期候选画像: {count} 条")
-
-    return count
-
-
 # ========== 行为统计 ==========
 
 
@@ -345,48 +356,175 @@ def get_behavior_stats(db: Session, days: int) -> BehaviorStatsResponse:
     )
 
 
-# ========== 画笔去重校验 ==========
+# ========== 画像演化 ==========
+
+# 单批操作指令数量上限（防止 LLM 输出失控）
+_MAX_OPERATIONS_PER_BATCH = 20
+
+
+def apply_profile_operations(
+    db: Session,
+    operations: list,
+    evidence_memories: list | None = None,
+    source_session_id: int | None = None,
+) -> dict:
+    """执行画像演化操作指令（CREATE/REINFORCE/REVISE），逐条独立校验，单条失败不中断。"""
+    stats = {"created": 0, "reinforced": 0, "revised": 0, "skipped": 0}
+    memories = evidence_memories or []
+
+    if len(operations) > _MAX_OPERATIONS_PER_BATCH:
+        logger.warning(
+            f"画像操作数超过上限，截断处理: {len(operations)} -> {_MAX_OPERATIONS_PER_BATCH}",
+        )
+        operations = operations[:_MAX_OPERATIONS_PER_BATCH]
+
+    for op_data in operations:
+        if not isinstance(op_data, dict):
+            stats["skipped"] += 1
+            continue
+        op = str(op_data.get("op", "")).upper()
+        try:
+            if op == "CREATE":
+                ok = _apply_create(db, op_data, memories)
+                stats["created" if ok else "skipped"] += 1
+            elif op == "REINFORCE":
+                ok = _apply_reinforce(db, op_data, memories, source_session_id)
+                stats["reinforced" if ok else "skipped"] += 1
+            elif op == "REVISE":
+                ok = _apply_revise(db, op_data, memories)
+                stats["revised" if ok else "skipped"] += 1
+            else:
+                stats["skipped"] += 1
+        except Exception as exc:
+            logger.warning(f"画像操作执行失败（跳过）: op={op}, error={exc}")
+            stats["skipped"] += 1
+
+    return stats
+
+
+def evolve_profiles(
+    db: Session,
+    api_key: str,
+    new_summary: str | None = None,
+    new_memories: list | None = None,
+    source_session_id: int | None = None,
+) -> dict:
+    """画像演化：现有画像对比新摘要/新记忆，调用 LLM 输出并执行增量操作指令。"""
+    from app.services import model_provider
+
+    memories = new_memories or []
+    if not new_summary and not memories:
+        return {"created": 0, "reinforced": 0, "revised": 0, "skipped": 0, "reason": "无新信息"}
+
+    active_config = model_provider.get_active_config(db)
+    if active_config is None:
+        return {"error": "无激活的模型配置"}
+
+    result_text = model_provider.chat_sync(
+        provider=active_config.provider,
+        model_name=active_config.model_name,
+        api_key=api_key,
+        api_base=active_config.api_base,
+        system_prompt=PROFILE_EVOLUTION_SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": _build_evolution_input(db, new_summary, memories)}],
+    )
+    if not result_text:
+        return {"error": "模型返回为空"}
+
+    parsed = _parse_extraction_result(result_text)
+    if parsed is None:
+        return {"error": "模型返回格式异常"}
+
+    operations = parsed.get("operations", [])
+    if not isinstance(operations, list) or not operations:
+        return {"created": 0, "reinforced": 0, "revised": 0, "skipped": 0, "reason": "无可执行操作"}
+
+    stats = apply_profile_operations(
+        db, operations,
+        evidence_memories=memories,
+        source_session_id=source_session_id,
+    )
+    logger.info(f"画像演化完成: {stats}")
+    return stats
+
+
+def build_profile_context(db: Session) -> str | None:
+    """组装已确认画像的系统提示词段落，无可用画像或异常时返回 None。"""
+    try:
+        items = db.scalars(
+            select(Profile)
+            .where(Profile.status.in_(["confirmed", "corrected"]))
+            .order_by(desc(Profile.confidence), desc(Profile.id))
+        ).all()
+        if not items:
+            return None
+
+        # token 预算换算为字符预算，超出按置信度降序截断（至少保留一条）
+        char_budget = int(_PROFILE_CONTEXT_TOKEN_BUDGET / _AVG_TOKEN_PER_CHAR)
+        selected = []
+        used = 0
+        for p in items:
+            cost = len(p.content)
+            if selected and used + cost > char_budget:
+                break
+            selected.append(p)
+            used += cost
+
+        grouped: dict[str, list] = {}
+        for p in selected:
+            grouped.setdefault(p.category, []).append(p)
+
+        lines = [
+            "以下是用户的长期画像（经用户确认的稳定特征），"
+            "请在回答内容和沟通方式上自然参考，无需向用户复述：",
+        ]
+        for category, profiles in grouped.items():
+            label = _CATEGORY_LABELS.get(category, category)
+            for p in profiles:
+                lines.append(f"- [{label}] {p.content}")
+        return "\n".join(lines)
+    except Exception as exc:
+        logger.warning(f"画像上下文组装失败（降级跳过）: {exc}")
+        return None
 
 
 def check_duplicate_profile(
     db: Session,
     category: str,
     content: str,
-    source_version: str | None = None,
+    exclude_profile_id: int | None = None,
 ) -> bool:
-    """检查是否存在同类别下高度相似的画像。
-
-    Args:
-        db: 数据库会话
-        category: 画像类别
-        content: 画像正文
-        source_version: 用于识别同一批记忆的重复提取
-
-    Returns:
-        True 表示存在重复
-    """
+    """检查同类别下是否已存在相似的活跃画像（候选修订版可豁免与被修订画像的比对）。"""
     existing = db.scalars(
         select(Profile).where(
             Profile.category == category,
-            Profile.status.notin_(["deleted", "rejected"]),
+            Profile.status.in_(["candidate", "confirmed", "corrected"]),
         )
     ).all()
 
     normalized_content = _normalize_profile_content(content)
     for profile in existing:
-        # 同一组记忆的同一类别只保留一条画像。这样手动/后台重复提取，
-        # 或模型在一次输出中重复同类结论时，都不会再新增一条记录。
-        if profile.source_version and profile.source_version == source_version:
+        if exclude_profile_id is not None and profile.id == exclude_profile_id:
+            continue
+        if _is_similar_content(
+            _normalize_profile_content(profile.content), normalized_content,
+        ):
             return True
 
-        normalized_existing = _normalize_profile_content(profile.content)
-        if normalized_existing == normalized_content:
-            return True
+    return False
 
-        similarity = SequenceMatcher(
-            None, normalized_existing, normalized_content,
-        ).ratio()
-        if similarity >= _CROSS_SOURCE_DUPLICATE_THRESHOLD:
+
+def matches_rejected_profile(db: Session, content: str) -> bool:
+    """检查内容是否与用户已否定的画像相似（程序级兜底，禁止自动重建）。"""
+    rejected = db.scalars(
+        select(Profile).where(Profile.status == "rejected")
+    ).all()
+
+    normalized_content = _normalize_profile_content(content)
+    for profile in rejected:
+        if _is_similar_content(
+            _normalize_profile_content(profile.content), normalized_content,
+        ):
             return True
 
     return False
@@ -397,179 +535,268 @@ def _normalize_profile_content(content: str) -> str:
     return re.sub(r"[\W_]+", "", content).casefold()
 
 
-# ========== 辅助函数 ==========
-
-"""辅助函数"""
-
-
 def sync_extract_profiles(
     db: Session,
     api_key: str,
     memory_ids: list[int] | None = None,
 ) -> dict:
-    """从已确认记忆中同步提取画像特征并保存候选画像。
-
-    这是 sync_extract_profiles 的纯业务方法，不涉及任务调度。
-    API 路由和后台任务处理器都通过此方法调用同一份提取逻辑。
-
-    Args:
-        db: 数据库会话
-        api_key: API Key
-        memory_ids: 指定记忆 ID 列表；None 表示提取全部已确认记忆
-
-    Returns:
-        dict: 包含 extracted（提取数）和 skipped（重复跳过数）或 error 字段
-    """
+    """从已确认记忆中演化画像（画像页手动触发入口）。"""
     try:
-        # 1. 获取模型配置和记忆数据
-        memories_data = _load_memories_for_extraction(db, memory_ids)
-        if not isinstance(memories_data, dict):
-            memories, source_version = memories_data
-        else:
-            return memories_data  # dict 即错误响应
-
-        # 2. 组装 prompt 并调用模型
-        result_text = _call_llm_for_extraction(db, api_key, memories, source_version)
-        if result_text is None:
-            return {"extracted": 0, "reason": "无激活的模型配置"}
-        if not result_text:
-            return {"extracted": 0, "reason": "模型返回为空"}
-
-        # 3. 解析结果
-        parsed = _parse_extraction_result(result_text)
-        if parsed is None:
-            return {"extracted": 0, "error": "模型返回格式异常"}
-        profiles_data = parsed.get("profiles", [])
-        if not profiles_data:
-            return {"extracted": 0, "reason": "未提取到有效画像"}
-
-        # 4. 保存候选画像（含去重）
-        extracted, skipped = _save_extracted_profiles(
-            db, profiles_data, source_version,
+        stmt = select(Memory).where(
+            Memory.status.in_(["confirmed", "corrected"]),
         )
-        logger.info(
-            f"画像提取完成: 提取 {extracted} 条, 跳过 {skipped} 条重复",
+        if memory_ids:
+            stmt = stmt.where(Memory.id.in_(memory_ids))
+        memories = list(
+            db.scalars(
+                stmt.order_by(desc(Memory.importance), desc(Memory.id))
+                .limit(50)
+            ).all()
         )
-        return {"extracted": extracted, "skipped": skipped}
+        if not memories:
+            return {"created": 0, "reinforced": 0, "revised": 0, "skipped": 0,
+                    "reason": "无可用的已确认记忆"}
+
+        return evolve_profiles(db, api_key, new_summary=None, new_memories=memories)
 
     except Exception as exc:
-        logger.error(f"画像提取模型调用异常: {exc}", exc_info=True)
-        return {"extracted": 0, "error": str(exc)[:200]}
+        logger.error(f"画像演化异常: {exc}", exc_info=True)
+        return {"error": str(exc)[:200]}
 
 
-def _load_memories_for_extraction(
-    db: Session, memory_ids: list[int] | None,
-) -> tuple[list, str] | dict:
-    """加载并格式化用于画像提取的记忆。返回 (memories列表, source_version) 或错误 dict。"""
-    from app.models.memory import Memory
-    from app.services import model_provider
-
-    if not model_provider.get_active_config(db):
-        return {"extracted": 0, "error": "无激活的模型配置"}
-
-    stmt = select(Memory).where(
-        Memory.status.in_(["confirmed", "corrected"]),
-    )
-    if memory_ids:
-        stmt = stmt.where(Memory.id.in_(memory_ids))
-    memories = list(
-        db.scalars(
-            stmt.order_by(desc(Memory.importance), desc(Memory.id))
-            .limit(50)
-        ).all()
-    )
-    if not memories:
-        return {"extracted": 0, "reason": "无可用的已确认记忆"}
-
-    memory_ids_sorted = sorted([m.id for m in memories])
-    source_version = (
-        f"memories_{'_'.join(str(i) for i in memory_ids_sorted[:20])}"
-    )
-    return memories, source_version
+"""辅助函数"""
 
 
-def _call_llm_for_extraction(
-    db: Session, api_key: str,
-    memories: list, source_version: str,
-) -> str | None:
-    """组装 prompt 并调用 LLM 进行画像提取。"""
-    from app.schemas.profile import PROFILE_CATEGORIES
-    from app.services import model_provider
-
-    # 获取激活配置
-    active_config = model_provider.get_active_config(db)
-    if active_config is None:
-        return None
-
-    # 格式化记忆文本
-    parts = []
-    for mem in memories:
-        parts.append(
-            f"[类型: {mem.type} | 重要性: {mem.importance}]\n{mem.content}",
-        )
-    memories_text = "\n\n---\n\n".join(parts)
-
-    return model_provider.chat_sync(
-        provider=active_config.provider,
-        model_name=active_config.model_name,
-        api_key=api_key,
-        api_base=active_config.api_base,
-        system_prompt=PROFILE_EXTRACTION_SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": memories_text}],
-    )
-
-
-def _save_extracted_profiles(
+def _build_evolution_input(
     db: Session,
-    profiles_data: list[dict],
-    source_version: str,
-) -> tuple[int, int]:
-    """保存提取到的画像，含去重和校验。返回 (extracted, skipped)。"""
-    from app.schemas.profile import PROFILE_CATEGORIES, ProfileCreate
+    new_summary: str | None,
+    memories: list,
+) -> str:
+    """组装画像演化提示词的用户输入文本（现有画像 + 摘要 + 新记忆）。"""
+    profiles = db.scalars(
+        select(Profile)
+        .where(Profile.status.in_(["candidate", "confirmed", "corrected", "rejected"]))
+        .order_by(Profile.id)
+    ).all()
 
-    extracted_count = 0
-    skipped_count = 0
+    lines = ["【现有画像列表】"]
+    if profiles:
+        for p in profiles:
+            status_note = (
+                "（用户已否定，禁止重建相似内容）" if p.status == "rejected" else ""
+            )
+            lines.append(f"#{p.id} [{p.category} | {p.status}]{status_note} {p.content}")
+    else:
+        lines.append("（暂无画像）")
 
-    for prof in profiles_data:
-        category = prof.get("category", "other")
-        content = (prof.get("content", "") or "").strip()
-        confidence = prof.get("confidence", 50)
-        evidence = (prof.get("evidence", "") or "").strip()
+    lines.append("")
+    lines.append("【本次会话摘要】")
+    lines.append(new_summary if new_summary else "（无）")
 
-        # 校验类别
-        if category not in PROFILE_CATEGORIES:
-            category = "other"
+    lines.append("")
+    lines.append("【本次新记忆】")
+    if memories:
+        for mem in memories:
+            lines.append(f"- [{mem.type} | 重要性 {mem.importance}] {mem.content}")
+    else:
+        lines.append("（无）")
 
-        # 校验内容
-        if not content or len(content) < 5:
-            continue
+    return "\n".join(lines)
 
-        # 限制置信度（有证据最高 80，否则最高 60）
-        confidence = min(max(confidence, 0), 80 if (evidence and len(evidence) > 10) else 60)
 
-        # 去重
-        if check_duplicate_profile(db, category, content, source_version):
-            skipped_count += 1
-            continue
+def _apply_create(
+    db: Session,
+    op_data: dict,
+    memories: list,
+    supersedes_profile_id: int | None = None,
+    forced_category: str | None = None,
+    forced_confidence: int | None = None,
+) -> bool:
+    """执行 CREATE 操作：校验、去重、rejected 兜底后创建候选画像。"""
+    category = forced_category or op_data.get("category", "other")
+    if category not in PROFILE_CATEGORIES:
+        category = "other"
 
-        create_data = ProfileCreate(
-            category=category,
-            content=content,
-            confidence=confidence,
-            is_auto_extracted=1,
-            source_version=source_version,
-            memory_ids=[],
-            evidence_texts=[evidence] if evidence else [],
+    content = str(op_data.get("content") or op_data.get("new_content") or "").strip()
+    if len(content) < 5:
+        return False
+    content = content[:_PROFILE_CONTENT_MAX_CHARS]
+
+    evidence = str(op_data.get("evidence") or "").strip()[:512]
+
+    if forced_confidence is not None:
+        confidence = forced_confidence
+    else:
+        confidence = op_data.get("confidence", 50)
+        if not isinstance(confidence, int):
+            confidence = 50
+        confidence = min(max(confidence, 0), 80 if len(evidence) > 10 else 60)
+
+    # 程序级兜底：禁止自动重建用户已否定的画像（prompt 标注不可信）
+    if matches_rejected_profile(db, content):
+        logger.info("画像 CREATE 跳过: 与已否定画像相似")
+        return False
+
+    if check_duplicate_profile(
+        db, category, content, exclude_profile_id=supersedes_profile_id,
+    ):
+        return False
+
+    # 同一旧画像最多保留一个候选修订版
+    if supersedes_profile_id is not None:
+        existing_revision = db.scalar(
+            select(Profile).where(
+                Profile.supersedes_profile_id == supersedes_profile_id,
+                Profile.status == "candidate",
+            ).limit(1)
         )
+        if existing_revision is not None:
+            return False
 
-        try:
-            create_candidate_profile(db, create_data)
-            extracted_count += 1
-        except Exception as exc:
-            logger.warning(f"保存候选画像失败: {exc}")
-            continue
+    evidence_memory = _find_evidence_memory(evidence, memories)
+    create_candidate_profile(db, ProfileCreate(
+        category=category,
+        content=content,
+        confidence=confidence,
+        is_auto_extracted=1,
+        memory_ids=[evidence_memory.id] if evidence_memory else [],
+        evidence_texts=[evidence] if evidence else [],
+        supersedes_profile_id=supersedes_profile_id,
+    ))
+    return True
 
-    return extracted_count, skipped_count
+
+def _apply_reinforce(
+    db: Session,
+    op_data: dict,
+    memories: list,
+    source_session_id: int | None,
+) -> bool:
+    """执行 REINFORCE 操作：追加证据，按程序规则步进置信度。"""
+    profile_id = op_data.get("profile_id")
+    if not isinstance(profile_id, int):
+        return False
+    profile = db.get(Profile, profile_id)
+    if profile is None or profile.status not in ("candidate", "confirmed", "corrected"):
+        return False
+
+    evidence = str(op_data.get("evidence") or "").strip()[:512]
+    if not evidence:
+        return False
+
+    # 幂等保护：相同证据已存在则整体跳过（任务重试场景）
+    duplicate_evidence = db.scalar(
+        select(ProfileSource).where(
+            ProfileSource.profile_id == profile_id,
+            ProfileSource.evidence_text == evidence,
+        ).limit(1)
+    )
+    if duplicate_evidence is not None:
+        return False
+
+    # 防刷分：同一会话来源最多贡献一次置信度提升
+    session_already_counted = False
+    if source_session_id is not None:
+        session_already_counted = db.scalar(
+            select(ProfileSource)
+            .join(Memory, Memory.id == ProfileSource.memory_id)
+            .where(
+                ProfileSource.profile_id == profile_id,
+                Memory.session_id == source_session_id,
+            ).limit(1)
+        ) is not None
+
+    evidence_memory = _find_evidence_memory(evidence, memories)
+    db.add(ProfileSource(
+        profile_id=profile_id,
+        source_type="extraction",
+        memory_id=evidence_memory.id if evidence_memory else None,
+        content_preview=evidence[:200],
+        evidence_text=evidence,
+    ))
+
+    # corrected 画像的置信度由用户设定，系统只追加证据不覆盖
+    if profile.status != "corrected" and not session_already_counted:
+        new_confidence = min(profile.confidence + _REINFORCE_STEP, _REINFORCE_CAP)
+        if new_confidence != profile.confidence:
+            db.add(ProfileRevision(
+                profile_id=profile_id,
+                previous_category=profile.category,
+                previous_content=profile.content,
+                previous_confidence=profile.confidence,
+                previous_status=profile.status,
+                changed_by="system",
+            ))
+            profile.confidence = new_confidence
+
+    commit_or_rollback(db)
+    logger.info(f"强化画像: id={profile_id}, confidence={profile.confidence}")
+    return True
+
+
+def _apply_revise(
+    db: Session,
+    op_data: dict,
+    memories: list,
+) -> bool:
+    """执行 REVISE 操作：候选画像直接修正，已确认画像生成候选修订版。"""
+    profile_id = op_data.get("profile_id")
+    if not isinstance(profile_id, int):
+        return False
+    profile = db.get(Profile, profile_id)
+    if profile is None or profile.status in ("rejected", "deleted"):
+        return False
+
+    new_content = str(op_data.get("new_content") or op_data.get("content") or "").strip()
+    if len(new_content) < 5:
+        return False
+    new_content = new_content[:_PROFILE_CONTENT_MAX_CHARS]
+
+    if new_content == profile.content:
+        return False
+
+    if profile.status == "candidate":
+        db.add(ProfileRevision(
+            profile_id=profile_id,
+            previous_category=profile.category,
+            previous_content=profile.content,
+            previous_confidence=profile.confidence,
+            previous_status=profile.status,
+            changed_by="system",
+        ))
+        profile.content = new_content
+        profile.version += 1
+        commit_or_rollback(db)
+        logger.info(f"修正候选画像: id={profile_id}, version={profile.version}")
+        return True
+
+    # confirmed/corrected 的内容经用户确认，系统不直接改，生成候选修订版供用户复核
+    return _apply_create(
+        db, op_data, memories,
+        supersedes_profile_id=profile.id,
+        forced_category=profile.category,
+        forced_confidence=min(profile.confidence, 60),
+    )
+
+
+def _find_evidence_memory(evidence: str, memories: list):
+    """根据证据文本匹配来源记忆（内容互相包含即视为匹配）。"""
+    if not evidence:
+        return None
+    for mem in memories:
+        content = mem.content or ""
+        if content and (evidence in content or content in evidence):
+            return mem
+    return None
+
+
+def _is_similar_content(normalized_a: str, normalized_b: str) -> bool:
+    """判断两段标准化画像文本是否相同或高度相似。"""
+    if normalized_a == normalized_b:
+        return True
+    return SequenceMatcher(
+        None, normalized_a, normalized_b,
+    ).ratio() >= _CROSS_SOURCE_DUPLICATE_THRESHOLD
 
 
 def _parse_extraction_result(text: str) -> dict | None:

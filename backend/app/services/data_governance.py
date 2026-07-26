@@ -24,6 +24,7 @@ from app.core.database import commit_or_rollback
 from app.models.activity import Activity, PrivacyRule
 from app.models.audit import AuditLog
 from app.models.chat import ChatSession, Message
+from app.models.conversation import AiArtifact, ConversationTurn, SessionSummary
 from app.models.data_governance import BackupRecord, DataExport, RetentionPolicy
 from app.models.goal import Goal, Task
 from app.models.memory import Memory, MemoryReference, MemoryRevision, MemorySource
@@ -87,6 +88,7 @@ def export_data(
     # 确定导出范围
     scope_modules = request.scope or [
         "sessions", "messages",
+        "conversation_turns", "session_summaries", "ai_artifacts",
         "memories", "memory_sources", "memory_revisions", "memory_references",
         "activities",
         "goals", "tasks",
@@ -185,6 +187,9 @@ def _export_module(
     module_map = {
         "sessions": lambda: _query_all_as_dicts(db, ChatSession, time_conditions),
         "messages": lambda: _query_all_as_dicts(db, Message, time_conditions),
+        "conversation_turns": lambda: _query_all_as_dicts(db, ConversationTurn, time_conditions),
+        "session_summaries": lambda: _query_all_as_dicts(db, SessionSummary, time_conditions),
+        "ai_artifacts": lambda: _query_all_as_dicts(db, AiArtifact, time_conditions),
         "memories": lambda: _query_all_as_dicts(db, Memory, time_conditions),
         "memory_sources": lambda: _query_all_as_dicts(db, MemorySource, time_conditions),
         "memory_revisions": lambda: _query_all_as_dicts(db, MemoryRevision, time_conditions),
@@ -949,14 +954,6 @@ def _cleanup_messages(db: Session, cutoff: datetime) -> int:
         )
     )
 
-    # 清理关联的画像来源（软引用，无外键约束）
-    db.execute(
-        delete(ProfileSource).where(
-            ProfileSource.source_type == "message",
-            ProfileSource.source_id.in_(msg_ids),
-        )
-    )
-
     # 清理消息
     result = db.execute(
         delete(Message).where(Message.id.in_(msg_ids))
@@ -974,14 +971,6 @@ def _cleanup_activities(db: Session, cutoff: datetime) -> int:
 
     if not activity_ids:
         return 0
-
-    # 清理关联的画像来源（软引用，无外键约束）
-    db.execute(
-        delete(ProfileSource).where(
-            ProfileSource.source_type == "activity",
-            ProfileSource.source_id.in_(activity_ids),
-        )
-    )
 
     # 清理活动记录
     result = db.execute(
@@ -1079,6 +1068,11 @@ def clear_all_data(
 
     # 按依赖顺序清除各表
     # 1. 先清除有外键依赖的表
+    for table in [AiArtifact, SessionSummary, ConversationTurn]:
+        count = db.execute(table.__table__.delete()).rowcount or 0
+        if count > 0:
+            cleared_tables.append(table.__tablename__)
+
     for table in [MemoryReference, MemoryRevision, MemorySource]:
         count = db.execute(table.__table__.delete()).rowcount or 0
         if count > 0:

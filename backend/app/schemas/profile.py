@@ -80,8 +80,8 @@ class ProfileCreate(BaseModel):
     evidence_texts: list[str] = Field(
         default_factory=list, description="各条来源对应的记忆原文证据",
     )
-    source_version: str | None = Field(
-        None, description="来源记忆版本号（用于校验来源是否变更）",
+    supersedes_profile_id: int | None = Field(
+        None, description="候选修订版指向的被修订画像 ID",
     )
 
 
@@ -110,12 +110,6 @@ class BehaviorStatsQuery(BaseModel):
     days: int = Field(7, ge=1, le=30, description="统计天数")  # type: ignore[misc]
 
 
-class ProfileExtractRequest(BaseModel):
-    """画像提取请求（当前无需参数，预留位置）。"""
-
-    pass
-
-
 # ========== 响应类（Response）==========
 
 
@@ -129,7 +123,7 @@ class ProfileResponse(BaseModel):
     status: str = Field(..., description="状态")
     is_auto_extracted: int = Field(..., description="是否自动提取")
     version: int = Field(..., description="版本号")
-    source_version: str | None = Field(None, description="来源版本号")
+    supersedes_profile_id: int | None = Field(None, description="候选修订版指向的被修订画像 ID")
     error_message: str | None = Field(None, description="错误信息")
     created_at: datetime | None = Field(None, description="创建时间")
     updated_at: datetime | None = Field(None, description="更新时间")

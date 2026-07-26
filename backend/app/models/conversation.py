@@ -19,10 +19,15 @@ class SessionSummary(BaseModel):
     __tablename__ = "session_summaries"
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(Integer, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, index=True)
-    from_turn_id = Column(Integer, ForeignKey("conversation_turns.id", ondelete="SET NULL"), nullable=True)
-    to_turn_id = Column(Integer, ForeignKey("conversation_turns.id", ondelete="SET NULL"), nullable=True)
+    from_message_id = Column(
+        Integer, ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True, comment="摘要覆盖区间的起始消息 ID",
+    )
+    to_message_id = Column(
+        Integer, ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True, comment="摘要覆盖区间的结束消息 ID",
+    )
     content = Column(Text, nullable=False)
-    source_version = Column(String(64), nullable=True)
 
 
 class AiArtifact(BaseModel):

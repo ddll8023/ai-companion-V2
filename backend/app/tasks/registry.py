@@ -23,14 +23,14 @@ def register_handler(task_type: str):
     """注册任务处理器的装饰器。
 
     Args:
-        task_type: 任务类型，如 'memory.extract'
+        task_type: 任务类型，如 'session.extract'
 
     Returns:
         装饰器函数
 
     Usage:
-        @register_handler("memory.extract")
-        def handle_memory_extract(payload: dict | None) -> str | None:
+        @register_handler("session.extract")
+        def handle_session_extract(payload: dict | None) -> str | None:
             ...
     """
 

@@ -1,5 +1,14 @@
 import { getAdapter } from '@/composables/useApi'
-import type { ApiResponse, ChatStreamEvent, Message, Session, SessionCreate, SessionUpdate } from '@/types/api'
+import type {
+  ApiResponse,
+  BackgroundTaskInfo,
+  ChatStreamEvent,
+  Message,
+  Session,
+  SessionCreate,
+  SessionExtractResult,
+  SessionUpdate,
+} from '@/types/api'
 
 const adapter = getAdapter()
 
@@ -28,6 +37,21 @@ export async function updateSession(id: number, data: SessionUpdate) {
 /** 删除会话 */
 export async function deleteSession(id: number) {
   return adapter.delete(`/api/v1/chat/sessions/${id}`)
+}
+
+// ── 会话提取 API ──────────────────────────────────────────────────────────
+
+/** 触发会话级记忆与画像提取（异步后台任务） */
+export async function extractSession(sessionId: number, apiKey?: string) {
+  return adapter.post<SessionExtractResult>(
+    `/api/v1/chat/sessions/${sessionId}/extract`,
+    { api_key: apiKey || undefined },
+  )
+}
+
+/** 查询提取任务状态（轮询用） */
+export async function getExtractTask(taskId: number) {
+  return adapter.get<BackgroundTaskInfo>(`/api/v1/tasks/${taskId}`)
 }
 
 // ── 消息 API ──────────────────────────────────────────────────────────────

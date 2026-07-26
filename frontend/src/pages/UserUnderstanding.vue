@@ -487,12 +487,11 @@ async function handleExtract() {
   try {
     // API Key 由后端进程缓存管理（对话时注入），浏览器和 Electron 均支持
     const res = await extractProfiles()
-    if (res.data?.result) {
-      const result = JSON.parse(res.data.result)
-      const extracted = result.extracted || 0
-      if (extracted > 0) {
-        await fetchProfiles()
-      }
+    const result = res.data?.result
+    if (result?.error) {
+      error.value = `画像提取失败：${result.error}`
+    } else {
+      await fetchProfiles()
     }
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '画像提取失败'
