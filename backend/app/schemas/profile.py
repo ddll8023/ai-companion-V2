@@ -164,7 +164,7 @@ class BehaviorStatsResponse(BaseModel):
     )
     chat_activity: list[dict] = Field(
         default_factory=list,
-        description="对话活跃度: [{\"date\": \"2026-07-16\", \"message_count\": 15}, ...]",
+        description="用户对话活跃度（仅用户主动发送）: [{\"date\": \"2026-07-16\", \"message_count\": 15}, ...]",
     )
 
     model_config = ConfigDict(from_attributes=True)

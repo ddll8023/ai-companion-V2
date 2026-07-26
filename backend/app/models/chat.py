@@ -43,6 +43,7 @@ class Message(Base):
     )
     role = Column(String(16), nullable=False, comment="角色: user/assistant/system")
     content = Column(Text, nullable=False, comment="消息内容")
+    reasoning_content = Column(Text, nullable=True, default=None, comment="推理过程内容（可选）")
     status = Column(
         String(16), nullable=False, default="completed", comment="状态: generating/completed/aborted/failed",
     )

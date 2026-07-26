@@ -42,6 +42,7 @@ export interface ModelConfig {
   provider: string
   model_name: string
   api_base: string | null
+  enable_reasoning: boolean
   is_active: boolean
   has_key: boolean
   status: string
@@ -56,6 +57,7 @@ export interface ModelConfigCreate {
   provider: string
   model_name: string
   api_base?: string
+  enable_reasoning?: boolean
 }
 
 /** 更新模型配置请求 */
@@ -64,6 +66,7 @@ export interface ModelConfigUpdate {
   provider?: string
   model_name?: string
   api_base?: string
+  enable_reasoning?: boolean
   has_key?: boolean
 }
 
@@ -105,6 +108,7 @@ export interface Message {
   session_id: number
   role: 'user' | 'assistant' | 'system'
   content: string
+  reasoning_content: string | null
   status: 'generating' | 'completed' | 'aborted' | 'failed'
   error_message: string | null
   model_name: string | null
@@ -121,10 +125,21 @@ export interface ChatRequest {
 
 /** 流式对话事件 */
 export interface ChatStreamEvent {
-  type: 'token' | 'done' | 'error' | 'user_saved'
+  type: 'token' | 'reasoning_token' | 'done' | 'error' | 'user_saved'
   content?: string
   message_id?: number
   message?: string
+}
+
+export interface AiArtifact {
+  id: number
+  session_id: number
+  assistant_message_id: number
+  title: string
+  content: string
+  status: 'saved' | 'adopted' | 'dismissed'
+  created_at: string | null
+  updated_at: string | null
 }
 
 // ── 记忆类型 ──────────────────────────────────────────────────────────────
@@ -169,6 +184,7 @@ export interface MemorySource {
   source_type: string
   source_id: number
   content_preview: string | null
+  evidence_text: string | null
   created_at: string | null
 }
 

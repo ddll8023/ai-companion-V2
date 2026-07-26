@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import datetime, timedelta
+from difflib import SequenceMatcher
 
 from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
@@ -20,6 +22,7 @@ from app.core.database import commit_or_rollback
 from app.models.activity import Activity
 from app.models.chat import Message
 from app.models.profile import Profile, ProfileRevision, ProfileSource
+from app.prompts.profile import PROFILE_EXTRACTION_SYSTEM_PROMPT
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
 from app.schemas.profile import (
     BehaviorStatsResponse,
@@ -39,6 +42,10 @@ logger = setup_logger(__name__)
 
 # 候选画像过期天数
 CANDIDATE_EXPIRE_DAYS = 7
+
+# 不同记忆批次中，模型常会用略有不同的措辞重复表达同一画像。
+# 阈值保守设置，避免把同类但实际不同的偏好合并掉。
+_CROSS_SOURCE_DUPLICATE_THRESHOLD = 0.88
 
 
 # ========== 公共入口函数 ==========
@@ -345,6 +352,7 @@ def check_duplicate_profile(
     db: Session,
     category: str,
     content: str,
+    source_version: str | None = None,
 ) -> bool:
     """检查是否存在同类别下高度相似的画像。
 
@@ -352,6 +360,7 @@ def check_duplicate_profile(
         db: 数据库会话
         category: 画像类别
         content: 画像正文
+        source_version: 用于识别同一批记忆的重复提取
 
     Returns:
         True 表示存在重复
@@ -360,19 +369,32 @@ def check_duplicate_profile(
         select(Profile).where(
             Profile.category == category,
             Profile.status.notin_(["deleted", "rejected"]),
-            Profile.content.contains(content[:50]),
-        ).limit(3)
+        )
     ).all()
 
-    if not existing:
-        return False
+    normalized_content = _normalize_profile_content(content)
+    for profile in existing:
+        # 同一组记忆的同一类别只保留一条画像。这样手动/后台重复提取，
+        # 或模型在一次输出中重复同类结论时，都不会再新增一条记录。
+        if profile.source_version and profile.source_version == source_version:
+            return True
 
-    # 精确匹配
-    for p in existing:
-        if p.content == content:
+        normalized_existing = _normalize_profile_content(profile.content)
+        if normalized_existing == normalized_content:
+            return True
+
+        similarity = SequenceMatcher(
+            None, normalized_existing, normalized_content,
+        ).ratio()
+        if similarity >= _CROSS_SOURCE_DUPLICATE_THRESHOLD:
             return True
 
     return False
+
+
+def _normalize_profile_content(content: str) -> str:
+    """标准化画像文本，使标点、空格和大小写差异不影响重复判断。"""
+    return re.sub(r"[\W_]+", "", content).casefold()
 
 
 # ========== 辅助函数 ==========
@@ -487,48 +509,13 @@ def _call_llm_for_extraction(
         )
     memories_text = "\n\n---\n\n".join(parts)
 
-    system_prompt = _build_extraction_system_prompt()
     return model_provider.chat_sync(
         provider=active_config.provider,
         model_name=active_config.model_name,
         api_key=api_key,
         api_base=active_config.api_base,
-        system_prompt=system_prompt,
+        system_prompt=PROFILE_EXTRACTION_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": memories_text}],
-    )
-
-
-def _build_extraction_system_prompt() -> str:
-    """构造画像提取的系统提示词。"""
-    return (
-        "你是用户画像分析助手。请阅读以下「用户已确认的记忆」列表，"
-        "从中提取用户的人物画像特征。\n\n"
-        "提取要求：\n"
-        "1. 只从给定的记忆内容中推断，禁止添加记忆未包含的信息\n"
-        "2. 提取稳定的、对长期理解用户有帮助的特征\n"
-        "3. 每条特征必须附带「evidence」（直接对应记忆原文）作为证据\n"
-        "4. 避免过度泛化：单条临时情绪不构成习惯或偏好\n"
-        "5. 用简洁明确的中文描述画像内容\n"
-        "6. 如果没有可提取的画像特征，返回空列表\n\n"
-        "可选类别：\n"
-        "- communication_preference（沟通偏好：语气、格式、风格等）\n"
-        "- work_habit（工作习惯：工作方式、工具偏好、时间安排等）\n"
-        "- learning_preference（学习偏好：学习方式、知识领域等）\n"
-        "- interest（兴趣方向：关注的话题、娱乐、爱好等）\n"
-        "- decision_preference（决策倾向：选择倾向、权衡方式等）\n"
-        "- time_habit（时间习惯：活跃时段、作息等）\n"
-        "- long_term_goal（长期目标：事业、学习、生活目标等）\n"
-        "- work_pattern（使用模式：常用应用、工作流程等）\n"
-        "- other（其他无法归类的稳定特征）\n\n"
-        "请以 JSON 格式返回，格式为：\n"
-        '{"profiles": [{"category": "...", "content": "...", '
-        '"confidence": 80, "evidence": "记忆原文..."}]}\n\n'
-        "置信度规则：\n"
-        "- 有 2 条以上独立记忆支持同一结论 → 60～80\n"
-        "- 只有 1 条记忆支持 → 最高 50\n"
-        "- 直觉推断但无直接记忆支持 → 最高 30\n"
-        "- 超过 80 的置信度必须有至少 3 条独立记忆交叉支持\n\n"
-        "只返回 JSON，不要包含其他说明文字。"
     )
 
 
@@ -561,7 +548,7 @@ def _save_extracted_profiles(
         confidence = min(max(confidence, 0), 80 if (evidence and len(evidence) > 10) else 60)
 
         # 去重
-        if check_duplicate_profile(db, category, content):
+        if check_duplicate_profile(db, category, content, source_version):
             skipped_count += 1
             continue
 
@@ -686,7 +673,11 @@ def _query_app_usage(db: Session, since: datetime) -> list[dict]:
 
 
 def _query_chat_activity(db: Session, since: datetime) -> list[dict]:
-    """查询对话活跃度（按日期聚合消息数）。"""
+    """查询用户对话活跃度（按日期聚合用户主动发送次数）。
+
+    一轮对话会同时保存用户消息和助手回复；活跃度应反映用户的主动发言，
+    因此不计入 assistant/system 消息。
+    """
     rows = db.execute(
         select(
             func.date(Message.created_at).label("date"),
@@ -695,6 +686,7 @@ def _query_chat_activity(db: Session, since: datetime) -> list[dict]:
         .where(
             Message.created_at >= since,
             Message.status == "completed",
+            Message.role == "user",
         )
         .group_by(func.date(Message.created_at))
         .order_by(func.date(Message.created_at))

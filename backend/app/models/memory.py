@@ -92,6 +92,9 @@ class MemorySource(Base):
     content_preview = Column(
         String(256), nullable=True, comment="来源内容预览（前 N 字符，不含完整正文）",
     )
+    evidence_text = Column(
+        String(512), nullable=True, comment="用于支持该记忆的用户原文片段",
+    )
     created_at = Column(
         DateTime, server_default=func.now(), nullable=False, comment="创建时间",
     )

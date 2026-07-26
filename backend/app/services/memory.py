@@ -69,12 +69,23 @@ def create_candidate_memory(
     commit_or_rollback(db)
 
     # 保存来源证据
-    for source_id in data.source_ids:
+    for index, source_id in enumerate(data.source_ids):
+        evidence_text = (
+            data.source_evidence_texts[index]
+            if index < len(data.source_evidence_texts)
+            else None
+        )
+        content_preview = data.content[:200]
+        if data.source_type == "message":
+            source_message = db.get(Message, source_id)
+            if source_message is not None:
+                content_preview = source_message.content[:200]
         source = MemorySource(
             memory_id=memory.id,
             source_type=data.source_type,
             source_id=source_id,
-            content_preview=data.content[:200],
+            content_preview=content_preview,
+            evidence_text=evidence_text,
         )
         db.add(source)
 

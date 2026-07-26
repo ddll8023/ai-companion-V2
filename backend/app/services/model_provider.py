@@ -52,6 +52,7 @@ def create_config(db: Session, data: ModelConfigCreate) -> ModelConfigResponse:
         provider=data.provider,
         model_name=data.model_name,
         api_base=data.api_base,
+        enable_reasoning=data.enable_reasoning,
     )
     db.add(config)
     commit_or_rollback(db)
@@ -71,6 +72,8 @@ def update_config(db: Session, config_id: int, data: ModelConfigUpdate) -> Model
         config.model_name = data.model_name
     if data.api_base is not None:
         config.api_base = data.api_base
+    if data.enable_reasoning is not None:
+        config.enable_reasoning = data.enable_reasoning
     if data.has_key is not None:
         config.has_key = 1 if data.has_key else 0
 
@@ -243,7 +246,8 @@ def chat_stream(
     api_base: str | None,
     messages: list[dict[str, str]],
     system_prompt: str | None = None,
-) -> Generator[str, None, None]:
+    include_reasoning: bool = False,
+) -> Generator[tuple[str, str], None, None]:
     """流式对话，逐 token 生成回复内容。
 
     Args:
@@ -255,12 +259,16 @@ def chat_stream(
         system_prompt: 系统提示词（可选）
 
     Yields:
-        每次生成一个 token 文本片段
+        (type, content) 元组，type 为 "text" 或 "reasoning"
     """
     if provider in ("openai", "openai-compatible"):
-        yield from _chat_stream_openai(model_name, api_key, api_base, messages, system_prompt)
+        yield from _chat_stream_openai(
+            model_name, api_key, api_base, messages, system_prompt, include_reasoning,
+        )
     elif provider == "anthropic":
-        yield from _chat_stream_anthropic(model_name, api_key, api_base, messages, system_prompt)
+        yield from _chat_stream_anthropic(
+            model_name, api_key, api_base, messages, system_prompt, include_reasoning,
+        )
     else:
         raise ServiceException(ErrorCode.MODEL_CONFIG_ERROR, f"不支持的供应商类型: {provider}")
 
@@ -271,7 +279,8 @@ def _chat_stream_openai(
     api_base: str | None,
     messages: list[dict[str, str]],
     system_prompt: str | None = None,
-) -> Generator[str, None, None]:
+    include_reasoning: bool = False,
+) -> Generator[tuple[str, str], None, None]:
     """OpenAI 兼容格式流式对话。"""
     base_url = (api_base or "https://api.openai.com/v1").rstrip("/")
     url = f"{base_url}/chat/completions"
@@ -307,9 +316,16 @@ def _chat_stream_openai(
                 try:
                     chunk = json.loads(data_str)
                     delta = chunk.get("choices", [{}])[0].get("delta", {})
+
+                    # 推理 token（o1/o3/DeepSeek-R1 等推理模型）
+                    reasoning = delta.get("reasoning_content", "")
+                    if reasoning and include_reasoning:
+                        yield ("reasoning", reasoning)
+
+                    # 文本 token
                     content = delta.get("content", "")
                     if content:
-                        yield content
+                        yield ("text", content)
                 except json.JSONDecodeError:
                     logger.warning(f"解析流式响应失败: {data_str[:100]}")
                     continue
@@ -321,7 +337,8 @@ def _chat_stream_anthropic(
     api_base: str | None,
     messages: list[dict[str, str]],
     system_prompt: str | None = None,
-) -> Generator[str, None, None]:
+    include_reasoning: bool = False,
+) -> Generator[tuple[str, str], None, None]:
     """Anthropic 格式流式对话。"""
     base_url = (api_base or "https://api.anthropic.com/v1").rstrip("/")
     url = f"{base_url}/messages"
@@ -355,12 +372,25 @@ def _chat_stream_anthropic(
                     data_str = line[6:]
                     try:
                         event = json.loads(data_str)
-                        if event.get("type") == "content_block_delta":
+                        event_type = event.get("type", "")
+
+                        if event_type == "content_block_start":
+                            block = event.get("content_block", {})
+                            if block.get("type") == "thinking":
+                                thinking = block.get("thinking", "")
+                                if thinking and include_reasoning:
+                                    yield ("reasoning", thinking)
+
+                        elif event_type == "content_block_delta":
                             delta = event.get("delta", {})
-                            if delta.get("type") == "text_delta":
+                            if delta.get("type") == "thinking_delta":
+                                thinking = delta.get("thinking", "")
+                                if thinking and include_reasoning:
+                                    yield ("reasoning", thinking)
+                            elif delta.get("type") == "text_delta":
                                 content = delta.get("text", "")
                                 if content:
-                                    yield content
+                                    yield ("text", content)
                     except json.JSONDecodeError:
                         logger.warning(f"解析 Anthropic 流式响应失败: {data_str[:100]}")
                         continue

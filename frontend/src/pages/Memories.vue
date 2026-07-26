@@ -298,6 +298,9 @@
                   <p v-if="source.content_preview" class="text-xs text-text-secondary">
                     {{ source.content_preview }}
                   </p>
+                  <p v-if="source.evidence_text" class="mt-1 text-xs text-primary">
+                    证据：{{ source.evidence_text }}
+                  </p>
                 </div>
               </div>
             </div>

@@ -1,65 +1,95 @@
 <template>
   <aside
-    class="
-      w-60 h-screen sticky top-0 self-start flex flex-col
-      bg-surface border-r border-border
-    "
+    class="h-full flex-shrink-0 flex flex-col bg-surface border-r border-border transition-[width] duration-200"
+    :class="isCollapsed ? 'w-16' : 'w-60'"
   >
     <!-- 应用标题 -->
-    <div class="h-14 flex items-center px-5 border-b border-border">
-      <h1 class="text-base font-semibold text-text">AI Companion</h1>
+    <div class="h-14 flex items-center border-b border-border" :class="isCollapsed ? 'justify-center px-2' : 'px-5'">
+      <font-awesome-icon
+        v-if="isCollapsed"
+        :icon="['fas', 'robot']"
+        class="text-primary"
+        title="AI Companion"
+      />
+      <h1 v-else class="text-base font-semibold text-text whitespace-nowrap">AI Companion</h1>
       <!-- 后端状态指示灯 -->
       <span
-        class="ml-3 inline-block w-2 h-2 rounded-full"
-        :class="appStore.backendReady ? 'bg-success' : 'bg-error'"
+        class="inline-block w-2 h-2 rounded-full"
+        :class="[appStore.backendReady ? 'bg-success' : 'bg-error', isCollapsed ? 'ml-1.5' : 'ml-3']"
         :title="appStore.backendReady ? '服务运行中' : '服务不可用'"
       />
+      <button
+        class="ml-auto w-7 h-7 flex items-center justify-center rounded text-text-tertiary hover:bg-hover hover:text-text transition-colors"
+        :class="isCollapsed ? 'hidden' : ''"
+        title="收起侧边栏"
+        aria-label="收起侧边栏"
+        @click="toggleCollapsed"
+      >
+        <font-awesome-icon :icon="['fas', 'angles-left']" />
+      </button>
     </div>
 
+    <button
+      v-if="isCollapsed"
+      class="mx-auto mt-2 w-9 h-8 flex items-center justify-center rounded text-text-tertiary hover:bg-hover hover:text-text transition-colors"
+      title="展开侧边栏"
+      aria-label="展开侧边栏"
+      @click="toggleCollapsed"
+    >
+      <font-awesome-icon :icon="['fas', 'angles-right']" />
+    </button>
+
     <!-- 导航菜单 -->
-    <nav class="flex-1 py-4 px-3 space-y-1">
+    <nav class="flex-1 py-4 space-y-1" :class="isCollapsed ? 'px-2' : 'px-3'">
       <router-link
         v-for="item in navItems"
         :key="item.path"
         :to="item.path"
         class="
-          flex items-center gap-3 px-3 py-2 rounded-lg text-sm
+          flex items-center rounded-lg text-sm
           transition-colors
         "
-        :class="isActive(item.path)
-          ? 'bg-primary-light text-primary-dark font-medium'
-          : 'text-text-secondary hover:bg-hover hover:text-text'"
+        :class="[
+          isCollapsed ? 'justify-center px-2 py-2.5' : 'gap-3 px-3 py-2',
+          isActive(item.path)
+            ? 'bg-primary-light text-primary-dark font-medium'
+            : 'text-text-secondary hover:bg-hover hover:text-text',
+        ]"
+        :title="isCollapsed ? item.label : undefined"
       >
         <font-awesome-icon
           :icon="['fas', item.icon]"
           class="w-5 text-center"
         />
-        <span>{{ item.label }}</span>
+        <span v-if="!isCollapsed" class="whitespace-nowrap">{{ item.label }}</span>
       </router-link>
     </nav>
 
     <!-- 底部：后端状态 + 版本信息 -->
-    <div class="px-5 py-3 border-t border-border space-y-1">
+    <div class="border-t border-border" :class="isCollapsed ? 'px-2 py-3' : 'px-5 py-3 space-y-1'">
       <div class="flex items-center gap-2 text-xs">
         <span
           class="inline-block w-1.5 h-1.5 rounded-full"
           :class="appStore.backendReady ? 'bg-success' : 'bg-error'"
         />
-        <span class="text-text-tertiary">
+        <span v-if="!isCollapsed" class="text-text-tertiary">
           {{ appStore.backendReady ? '服务运行中' : '服务不可用' }}
         </span>
       </div>
-      <span class="text-xs text-text-tertiary">v0.1.0</span>
+      <span v-if="!isCollapsed" class="text-xs text-text-tertiary">v0.1.0</span>
     </div>
   </aside>
 </template>
 
 <script setup lang="ts">
+import { onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAppStore } from '@/stores/app'
 
 const route = useRoute()
 const appStore = useAppStore()
+const isCollapsed = ref(false)
+const SIDEBAR_COLLAPSED_KEY = 'ai_companion_sidebar_collapsed'
 
 interface NavItem {
   path: string
@@ -85,4 +115,13 @@ function isActive(path: string): boolean {
   }
   return route.path === path
 }
+
+function toggleCollapsed() {
+  isCollapsed.value = !isCollapsed.value
+  localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(isCollapsed.value))
+}
+
+onMounted(() => {
+  isCollapsed.value = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === 'true'
+})
 </script>

@@ -20,10 +20,15 @@ from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.core import api_key_cache
-from app.core.config import settings
 from app.core.database import commit_or_rollback, get_background_db_session
 from app.models.chat import ChatSession, Message
+from app.models.conversation import ConversationTurn
 from app.models.memory import MemoryReference
+from app.prompts.chat import (
+    DEFAULT_CHAT_SYSTEM_PROMPT,
+    TITLE_GENERATION_SYSTEM_PROMPT,
+    build_chat_system_prompt,
+)
 from app.schemas.chat import MessageResponse, SessionCreate, SessionResponse, SessionUpdate
 from app.schemas.reference import MemoryReferenceResponse
 from app.schemas.common import ErrorCode
@@ -38,9 +43,6 @@ from app.utils.logger_config import setup_logger
 logger = setup_logger(__name__)
 
 DEFAULT_TITLE = "新对话"
-_DEFAULT_SYSTEM_PROMPT = settings.SYSTEM_PROMPT
-
-
 # ── 会话 CRUD ──────────────────────────────────────────────────────────────
 
 
@@ -154,24 +156,38 @@ def _create_assistant_placeholder(
     return msg
 
 
-def _complete_assistant_message(db: Session, message_id: int, content: str) -> None:
+def _complete_assistant_message(
+    db: Session,
+    message_id: int,
+    content: str,
+    reasoning_content: str | None = None,
+) -> None:
     """助手消息完成，保存完整内容并更新状态。"""
     msg = db.get(Message, message_id)
     if msg is None:
         logger.warning(f"助手消息不存在: id={message_id}")
         return
     msg.content = content
+    msg.reasoning_content = reasoning_content
     msg.status = "completed"
+    _set_turn_status(db, message_id, "completed")
     commit_or_rollback(db)
 
 
-def _abort_assistant_message(db: Session, message_id: int, content: str) -> None:
+def _abort_assistant_message(
+    db: Session,
+    message_id: int,
+    content: str,
+    reasoning_content: str | None = None,
+) -> None:
     """中止助手消息，保存已生成内容并标记为已中止。"""
     msg = db.get(Message, message_id)
     if msg is None:
         return
     msg.content = content
+    msg.reasoning_content = reasoning_content
     msg.status = "aborted"
+    _set_turn_status(db, message_id, "aborted")
     commit_or_rollback(db)
 
 
@@ -182,7 +198,16 @@ def _fail_assistant_message(db: Session, message_id: int, error_message: str) ->
         return
     msg.status = "failed"
     msg.error_message = error_message[:256]
+    _set_turn_status(db, message_id, "failed")
     commit_or_rollback(db)
+
+
+def _set_turn_status(db: Session, assistant_message_id: int, status: str) -> None:
+    turn = db.scalar(select(ConversationTurn).where(
+        ConversationTurn.assistant_message_id == assistant_message_id,
+    ).limit(1))
+    if turn is not None:
+        turn.status = status
 
 
 # ── 流式对话编排 ────────────────────────────────────────────────────────────
@@ -241,6 +266,13 @@ def initialize_chat_stream(
 
     # 创建助手占位消息
     assistant_msg = _create_assistant_placeholder(db, session_id, active_config.model_name, active_config.provider)
+    db.add(ConversationTurn(
+        session_id=session_id,
+        user_message_id=user_msg.id,
+        assistant_message_id=assistant_msg.id,
+        status="generating",
+    ))
+    commit_or_rollback(db)
 
     # 获取历史消息并构造模型调用消息列表（过滤掉占位消息）
     history_messages = get_messages(db, session_id)
@@ -256,14 +288,15 @@ def initialize_chat_stream(
         query_text=user_content,
     )
 
-    # 构造系统提示词（包含检索到的记忆）
+    # 构造系统提示词（包含检索到的记忆和推理展示偏好）
+    base_system_prompt = build_chat_system_prompt(active_config.enable_reasoning)
     if memory_context and memory_context.enabled:
         system_prompt = retrieval.build_system_prompt_with_context(
-            base_prompt=_DEFAULT_SYSTEM_PROMPT,
+            base_prompt=base_system_prompt,
             memory_context=memory_context,
         )
     else:
-        system_prompt = _DEFAULT_SYSTEM_PROMPT
+        system_prompt = base_system_prompt
 
     # 尝试自动更新会话标题（首次对话时）
     _try_auto_title(db, session_id, user_content, history_messages, resolved_key)
@@ -275,6 +308,7 @@ def initialize_chat_stream(
             "provider": active_config.provider,
             "model_name": active_config.model_name,
             "api_base": active_config.api_base,
+            "enable_reasoning": active_config.enable_reasoning,
         },
         "model_messages": model_messages,
         "api_key": resolved_key,
@@ -306,10 +340,12 @@ def run_chat_stream(
     Yields:
         流式事件字典:
         - {"type": "token", "content": "..."} — 内容 token
+        - {"type": "reasoning_token", "content": "..."} — 推理 token
         - {"type": "done", "message_id": 123} — 完成
         - {"type": "error", "message": "..."} — 错误
     """
     collected_content = ""
+    collected_reasoning = ""
 
     # 将 API Key 存入进程内存缓存（供后台任务使用），不持久化到 SQLite
     api_key_cache_key = f"chat_{assistant_msg_id}"
@@ -319,21 +355,29 @@ def run_chat_stream(
         api_key_cache.store_global(api_key)
 
     try:
-        for token in model_provider.chat_stream(
+        for token_type, token in model_provider.chat_stream(
             provider=active_config["provider"],
             model_name=active_config["model_name"],
             api_key=api_key,
             api_base=active_config.get("api_base"),
             messages=model_messages,
-            system_prompt=system_prompt or _DEFAULT_SYSTEM_PROMPT,
+            system_prompt=system_prompt or DEFAULT_CHAT_SYSTEM_PROMPT,
+            include_reasoning=active_config.get("enable_reasoning", False),
         ):
-            collected_content += token
-            yield {"type": "token", "content": token}
+            if token_type == "reasoning":
+                collected_reasoning += token
+                yield {"type": "reasoning_token", "content": token}
+            else:
+                collected_content += token
+                yield {"type": "token", "content": token}
 
         # 完成：使用独立 session 持久化
         with get_background_db_session() as db:
             # 第1步：保存完整回复（关键路径，优先提交）
-            _complete_assistant_message(db, assistant_msg_id, collected_content)
+            _complete_assistant_message(
+                db, assistant_msg_id, collected_content,
+                reasoning_content=collected_reasoning or None,
+            )
 
         with get_background_db_session() as db:
             # 第2步：创建候选记忆提取后台任务
@@ -359,7 +403,10 @@ def run_chat_stream(
         logger.warning(f"客户端断开连接，生成中止: session_id={session_id}")
         with get_background_db_session() as db:
             if collected_content:
-                _abort_assistant_message(db, assistant_msg_id, collected_content)
+                _abort_assistant_message(
+                    db, assistant_msg_id, collected_content,
+                    reasoning_content=collected_reasoning or None,
+                )
             else:
                 _fail_assistant_message(db, assistant_msg_id, "用户中止")
         # 清理 API Key 缓存
@@ -369,7 +416,10 @@ def run_chat_stream(
     except ServiceException as e:
         with get_background_db_session() as db:
             if collected_content:
-                _abort_assistant_message(db, assistant_msg_id, collected_content)
+                _abort_assistant_message(
+                    db, assistant_msg_id, collected_content,
+                    reasoning_content=collected_reasoning or None,
+                )
             else:
                 _fail_assistant_message(db, assistant_msg_id, e.message)
         api_key_cache.pop(api_key_cache_key)
@@ -378,7 +428,10 @@ def run_chat_stream(
         logger.error(f"对话流式调用异常: {e}", exc_info=True)
         with get_background_db_session() as db:
             if collected_content:
-                _abort_assistant_message(db, assistant_msg_id, collected_content)
+                _abort_assistant_message(
+                    db, assistant_msg_id, collected_content,
+                    reasoning_content=collected_reasoning or None,
+                )
             else:
                 _fail_assistant_message(db, assistant_msg_id, str(e))
         api_key_cache.pop(api_key_cache_key)
@@ -416,7 +469,7 @@ def _try_auto_title(
                     model_name=active_config.model_name,
                     api_key=api_key,
                     api_base=active_config.api_base,
-                    system_prompt="为以下用户消息生成一个简短的对话标题（20 字以内，不要引号）。",
+                    system_prompt=TITLE_GENERATION_SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_content[:500]}],
                 )
                 if summary:
@@ -455,7 +508,7 @@ def _try_create_memory_extract_task(
         db: 数据库会话
         session_id: 会话 ID
         assistant_message_id: 助手消息 ID
-        assistant_content: 助手回复内容（用于生成 source_version 版本校验）
+        assistant_content: 助手回复内容（当前保留参数以兼容调用；不作为用户事实来源）
     """
     try:
         # 查找该会话最新的一条用户消息作为来源
@@ -473,9 +526,9 @@ def _try_create_memory_extract_task(
             logger.warning(f"记忆提取任务创建: 未找到用户消息, session_id={session_id}")
             return
 
-        # 使用消息内容的 MD5 作为 source_version，用于执行时校验来源是否变更
+        # 仅使用用户消息生成来源版本。助手回复不能作为用户事实证据。
         content_md5 = hashlib.md5(
-            f"{user_msg.content}|{assistant_content}".encode("utf-8")
+            user_msg.content.encode("utf-8")
         ).hexdigest()
 
         payload = {

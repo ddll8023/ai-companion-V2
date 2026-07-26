@@ -20,6 +20,10 @@ class MemoryCreate(BaseModel):
     source_version: str | None = Field(None, description="来源内容版本号")
     source_type: str = Field("message", description="来源类型: message/activity/user")
     source_ids: list[int] = Field(default_factory=list, description="来源记录 ID 列表")
+    source_evidence_texts: list[str] = Field(
+        default_factory=list,
+        description="与来源记录一一对应的原文证据片段",
+    )
 
 
 class MemoryCorrect(BaseModel):
@@ -56,6 +60,7 @@ class MemorySourceResponse(BaseModel):
     source_type: str
     source_id: int
     content_preview: str | None = None
+    evidence_text: str | None = None
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

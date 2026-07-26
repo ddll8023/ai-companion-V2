@@ -1,8 +1,8 @@
 <template>
-  <div class="flex h-full overflow-hidden">
+  <div class="flex h-full min-h-0 overflow-hidden">
     <!-- 会话列表侧栏 -->
     <aside
-      class="w-60 flex-shrink-0 flex flex-col border-r border-border bg-surface/50"
+      class="w-60 flex-shrink-0 flex flex-col min-h-0 border-r border-border bg-surface/50"
     >
       <!-- 新建对话按钮 -->
       <div class="p-3">
@@ -29,25 +29,35 @@
       <!-- 加载状态 -->
       <LoadingState :loading="loadingSessions" loading-text="加载对话列表...">
         <div class="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-          <button
+          <div
             v-for="sess in sessions"
             :key="sess.id"
-            class="w-full text-left px-3 py-2 rounded-lg text-sm transition-colors truncate"
+            class="group flex items-center gap-1 rounded-lg text-sm transition-colors"
             :class="currentSessionId === sess.id
               ? 'bg-primary-light text-primary-dark font-medium'
               : 'text-text-secondary hover:bg-hover hover:text-text'
             "
-            @click="switchSession(sess.id)"
           >
-            <div class="flex items-center gap-2">
+            <button
+              class="min-w-0 flex-1 flex items-center gap-2 px-3 py-2 text-left"
+              @click="switchSession(sess.id)"
+            >
               <font-awesome-icon
                 :icon="['fas', 'message']"
                 class="text-xs flex-shrink-0"
                 :class="currentSessionId === sess.id ? 'text-primary' : 'text-text-tertiary'"
               />
               <span class="truncate">{{ sess.title }}</span>
-            </div>
-          </button>
+            </button>
+            <button
+              class="mr-1 flex-shrink-0 w-7 h-7 flex items-center justify-center rounded text-text-tertiary opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-error/10 hover:text-error focus:opacity-100 transition-all disabled:cursor-not-allowed"
+              :disabled="isGenerating"
+              :title="isGenerating ? '生成中不能删除会话' : '删除对话'"
+              @click.stop="requestDeleteSession(sess)"
+            >
+              <font-awesome-icon :icon="['fas', 'trash']" class="text-xs" />
+            </button>
+          </div>
 
           <!-- 空状态 -->
           <EmptyState
@@ -124,6 +134,23 @@
                   : 'bg-surface border border-border text-text rounded-bl-md'
                 "
               >
+                <!-- 推理过程（已完成/已中止的助手消息） -->
+                <div
+                  v-if="msg.role === 'assistant' && msg.reasoning_content"
+                  class="mb-3"
+                >
+                  <details class="group">
+                    <summary class="cursor-pointer text-[#8b7d6b] text-xs font-medium select-none flex items-center gap-1.5 hover:text-[#6b5d4b] transition-colors">
+                      <font-awesome-icon :icon="['fas', 'brain']" class="text-xs" />
+                      推理过程
+                      <font-awesome-icon :icon="['fas', 'chevron-down']" class="ml-1 text-[10px] transition-transform group-open:rotate-180" />
+                    </summary>
+                    <div class="mt-2 p-3 bg-[#f8f6f0] border border-[#e8e0d0] rounded-lg text-xs leading-relaxed text-[#6b5d4b] whitespace-pre-wrap">
+                      {{ msg.reasoning_content }}
+                    </div>
+                  </details>
+                </div>
+
                 {{ msg.content }}
                 <!-- 生成中的动画 -->
                 <span
@@ -173,19 +200,66 @@
                     </div>
                   </div>
                 </div>
+                <div
+                  v-if="msg.role === 'assistant' && msg.status === 'completed' && msg.content"
+                  class="mt-3 pt-2 border-t border-border/50 flex flex-wrap gap-2"
+                >
+                  <button class="text-xs text-text-tertiary hover:text-primary" @click="saveAiContent(msg)">
+                    <font-awesome-icon :icon="['fas', 'bookmark']" class="mr-1" />收藏
+                  </button>
+                  <button class="text-xs text-text-tertiary hover:text-primary" @click="rememberAiContent(msg)">
+                    <font-awesome-icon :icon="['fas', 'brain']" class="mr-1" />记住方案
+                  </button>
+                  <button class="text-xs text-text-tertiary hover:text-primary" @click="createTaskFromAiContent(msg)">
+                    <font-awesome-icon :icon="['fas', 'list-check']" class="mr-1" />创建任务建议
+                  </button>
+                </div>
               </div>
             </div>
 
-            <!-- 流式传输中的助手消息 -->
+            <!-- 流式传输中的助手消息。发送后立即显示，避免首个 token 到达前没有反馈。 -->
             <div
-              v-if="streamingContent !== ''"
+              v-if="isGenerating"
               class="flex justify-start"
             >
               <div
                 class="max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words bg-surface border border-border text-text rounded-bl-md"
               >
-                {{ streamingContent }}
-                <span class="inline-block w-1.5 h-4 ml-0.5 bg-current rounded-sm animate-pulse" />
+                <!-- 流式推理过程 -->
+                <div
+                  v-if="streamingReasoning !== ''"
+                  class="mb-3"
+                >
+                  <details open class="group">
+                    <summary class="cursor-pointer text-[#8b7d6b] text-xs font-medium select-none flex items-center gap-1.5 hover:text-[#6b5d4b] transition-colors">
+                      <font-awesome-icon :icon="['fas', 'brain']" class="text-xs" />
+                      推理过程
+                      <font-awesome-icon :icon="['fas', 'chevron-down']" class="ml-1 text-[10px] transition-transform group-open:rotate-180" />
+                    </summary>
+                    <div class="mt-2 p-3 bg-[#f8f6f0] border border-[#e8e0d0] rounded-lg text-xs leading-relaxed text-[#6b5d4b] whitespace-pre-wrap">
+                      {{ streamingReasoning }}
+                    </div>
+                  </details>
+                </div>
+
+                <template v-if="streamingContent !== ''">
+                  {{ streamingContent }}
+                  <span class="inline-block w-1.5 h-4 ml-0.5 bg-current rounded-sm animate-pulse" />
+                </template>
+                <!-- 模型尚未返回推理或正文时的首响应等待反馈 -->
+                <div
+                  v-else-if="streamingReasoning === ''"
+                  class="flex items-center gap-2 text-text-secondary"
+                  aria-live="polite"
+                >
+                  <font-awesome-icon :icon="['fas', 'brain']" class="text-primary animate-pulse" />
+                  <span>正在思考</span>
+                  <span class="flex gap-1" aria-hidden="true">
+                    <i class="w-1.5 h-1.5 rounded-full bg-current animate-bounce" />
+                    <i class="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:150ms]" />
+                    <i class="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:300ms]" />
+                  </span>
+                </div>
               </div>
             </div>
           </LoadingState>
@@ -230,6 +304,17 @@
         </div>
       </template>
     </div>
+
+    <ConfirmDialog
+      :visible="showDeleteDialog"
+      title="删除对话"
+      :message="deleteTarget ? `确定删除对话「${deleteTarget.title}」吗？其中的全部消息也会被删除，且无法恢复。` : ''"
+      confirm-text="删除"
+      cancel-text="取消"
+      :danger="true"
+      @confirm="confirmDeleteSession"
+      @cancel="showDeleteDialog = false"
+    />
   </div>
 </template>
 
@@ -238,9 +323,11 @@ import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
 import type { Message, Session, ChatStreamEvent } from '@/types/api'
 import * as chatApi from '@/api/chat'
 import * as modelApi from '@/api/model'
+import * as artifactApi from '@/api/artifact'
 import { useAppStore } from '@/stores/app'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
+import ConfirmDialog from '@/components/custom/ConfirmDialog.vue'
 
 // ── 状态 ──────────────────────────────────────────────────────────────────
 
@@ -258,7 +345,11 @@ const errorMessage = ref<string | null>(null)
 const inputText = ref('')
 const isGenerating = ref(false)
 const streamingContent = ref('')
+const streamingReasoning = ref('')
 const abortController = ref<AbortController | null>(null)
+const showDeleteDialog = ref(false)
+const deleteTarget = ref<Session | null>(null)
+const deletingSessionId = ref<number | null>(null)
 
 const messagesContainer = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -268,6 +359,7 @@ const inputRef = ref<HTMLTextAreaElement | null>(null)
 function buildAssistantMessage(opts: {
   id: number
   content: string
+  reasoningContent?: string
   status: 'completed' | 'aborted'
 }): Message {
   return {
@@ -275,6 +367,7 @@ function buildAssistantMessage(opts: {
     session_id: currentSessionId.value!,
     role: 'assistant',
     content: opts.content,
+    reasoning_content: opts.reasoningContent || null,
     status: opts.status,
     error_message: null,
     model_name: activeConfig.value?.model_name || null,
@@ -316,6 +409,7 @@ async function fetchSessions() {
   try {
     const res = await chatApi.listSessions()
     sessions.value = res.data || []
+    appStore.hasSession = sessions.value.length > 0
   } catch (e: unknown) {
     errorMessage.value = e instanceof Error ? e.message : '加载会话列表失败'
   } finally {
@@ -359,6 +453,7 @@ async function handleNewSession() {
     try { appStore.hasSession = true } catch {}
     messages.value = []
     streamingContent.value = ''
+    streamingReasoning.value = ''
     await nextTick()
     focusInput()
   } catch (e: unknown) {
@@ -370,9 +465,45 @@ async function switchSession(sessionId: number) {
   if (isGenerating.value) return // 生成中不允许切换
   currentSessionId.value = sessionId
   streamingContent.value = ''
+  streamingReasoning.value = ''
   await fetchMessages()
   await nextTick()
   focusInput()
+}
+
+function requestDeleteSession(session: Session) {
+  if (isGenerating.value) return
+  deleteTarget.value = session
+  showDeleteDialog.value = true
+}
+
+async function confirmDeleteSession() {
+  const target = deleteTarget.value
+  if (!target || deletingSessionId.value !== null) return
+
+  deletingSessionId.value = target.id
+  errorMessage.value = null
+  try {
+    await chatApi.deleteSession(target.id)
+    const deletedCurrentSession = currentSessionId.value === target.id
+    sessions.value = sessions.value.filter(session => session.id !== target.id)
+    appStore.hasSession = sessions.value.length > 0
+
+    if (deletedCurrentSession) {
+      const nextSession = sessions.value[0]
+      currentSessionId.value = nextSession?.id ?? null
+      messages.value = []
+      streamingContent.value = ''
+      streamingReasoning.value = ''
+      if (nextSession) await fetchMessages()
+    }
+  } catch (e: unknown) {
+    errorMessage.value = e instanceof Error ? e.message : '删除对话失败'
+  } finally {
+    deletingSessionId.value = null
+    deleteTarget.value = null
+    showDeleteDialog.value = false
+  }
 }
 
 // ── 发送消息 / 流式对话 ──────────────────────────────────────────────────
@@ -391,6 +522,7 @@ async function handleSend() {
     session_id: currentSessionId.value,
     role: 'user',
     content,
+    reasoning_content: null,
     status: 'completed',
     error_message: null,
     model_name: null,
@@ -402,6 +534,7 @@ async function handleSend() {
 
   isGenerating.value = true
   streamingContent.value = ''
+  streamingReasoning.value = ''
 
   // 清理旧生成消息：将已有 status=generating 的消息标记为已中止
   // 异常恢复场景下可能残存未结束的占位消息
@@ -431,17 +564,24 @@ function handleStreamEvent(event: ChatStreamEvent) {
       scrollToBottom()
       break
 
+    case 'reasoning_token':
+      streamingReasoning.value += event.content || ''
+      scrollToBottom()
+      break
+
     case 'done':
       // 完成：添加完整的助手消息
-      if (streamingContent.value) {
+      if (streamingContent.value || streamingReasoning.value) {
         const newAssistantMessage = buildAssistantMessage({
           id: event.message_id || Date.now(),
           content: streamingContent.value,
+          reasoningContent: streamingReasoning.value,
           status: 'completed',
         })
         messages.value.push(newAssistantMessage)
       }
       streamingContent.value = ''
+      streamingReasoning.value = ''
       isGenerating.value = false
       scrollToBottom()
       focusInput()
@@ -449,12 +589,14 @@ function handleStreamEvent(event: ChatStreamEvent) {
 
     case 'error':
       // 如果已有流式内容，作为已中止消息添加
-      if (streamingContent.value) {
+      if (streamingContent.value || streamingReasoning.value) {
         const partialMessage = buildAssistantMessage({
           id: Date.now(),
           content: streamingContent.value,
+          reasoningContent: streamingReasoning.value,
           status: 'aborted',
         })
+        messages.value.push(partialMessage)
       } else {
         // 无内容时显示错误
         const errorMsg = event.message || '生成失败'
@@ -462,6 +604,7 @@ function handleStreamEvent(event: ChatStreamEvent) {
         errorMessage.value = errorMsg
       }
       streamingContent.value = ''
+      streamingReasoning.value = ''
       isGenerating.value = false
       scrollToBottom()
       break
@@ -476,6 +619,7 @@ function handleStreamError(err: Error) {
   errorMessage.value = err.message || '对话请求失败'
   isGenerating.value = false
   streamingContent.value = ''
+  streamingReasoning.value = ''
 }
 
 function handleStop() {
@@ -483,18 +627,39 @@ function handleStop() {
   abortController.value?.abort()
 
   // 已有流式内容作为已中止消息保留
-  if (streamingContent.value) {
+  if (streamingContent.value || streamingReasoning.value) {
     const partialMessage = buildAssistantMessage({
       id: Date.now(),
       content: streamingContent.value,
+      reasoningContent: streamingReasoning.value,
       status: 'aborted',
     })
     messages.value.push(partialMessage)
   }
   streamingContent.value = ''
+  streamingReasoning.value = ''
   isGenerating.value = false
   errorMessage.value = null
   focusInput()
+}
+
+async function saveAiContent(message: Message) {
+  try { await artifactApi.saveAiArtifact(message.session_id, message.id) }
+  catch (e: unknown) { errorMessage.value = e instanceof Error ? e.message : '收藏 AI 内容失败' }
+}
+
+async function rememberAiContent(message: Message) {
+  try {
+    const artifact = await artifactApi.saveAiArtifact(message.session_id, message.id)
+    await artifactApi.rememberAiArtifact(artifact.data!.id)
+  } catch (e: unknown) { errorMessage.value = e instanceof Error ? e.message : '创建候选记忆失败' }
+}
+
+async function createTaskFromAiContent(message: Message) {
+  try {
+    const artifact = await artifactApi.saveAiArtifact(message.session_id, message.id)
+    await artifactApi.createTaskSuggestionFromArtifact(artifact.data!.id)
+  } catch (e: unknown) { errorMessage.value = e instanceof Error ? e.message : '创建任务建议失败' }
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────

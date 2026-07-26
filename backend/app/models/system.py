@@ -17,6 +17,12 @@ class ModelConfig(BaseModel):
     provider = Column(String(32), nullable=False, comment="模型供应商: openai/anthropic/openai-compatible")
     model_name = Column(String(128), nullable=False, comment="模型名称")
     api_base = Column(String(256), nullable=True, comment="API 地址（可选）")
+    enable_reasoning = Column(
+        Boolean,
+        nullable=False,
+        default=False,
+        comment="是否展示并保存模型返回的推理过程",
+    )
     is_active = Column(Boolean, nullable=False, default=False, comment="是否为激活配置")
     has_key = Column(Boolean, nullable=False, default=False, comment="是否已配置密钥")
     status = Column(String(16), nullable=False, default="inactive", comment="状态: inactive/active/error")

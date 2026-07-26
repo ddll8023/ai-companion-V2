@@ -67,6 +67,9 @@ export async function streamChat(
           onToken: (token: string) => {
             onEvent({ type: 'token', content: token })
           },
+          onReasoning: (token: string) => {
+            onEvent({ type: 'reasoning_token', content: token })
+          },
           onDone: (messageId: number | null) => {
             onEvent({ type: 'done', message_id: messageId ?? undefined })
           },

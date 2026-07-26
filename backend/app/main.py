@@ -115,6 +115,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # 注册路由
 from app.api import activities as api_activities
+from app.api import artifacts as api_artifacts
 from app.api import audit as api_audit
 from app.api import chat as api_chat
 from app.api import data as api_data
@@ -128,6 +129,7 @@ from app.api import system as api_system
 from app.api import tasks as api_tasks
 
 app.include_router(api_activities.router)
+app.include_router(api_artifacts.router)
 app.include_router(api_audit.router)
 app.include_router(api_chat.router)
 app.include_router(api_data.router)

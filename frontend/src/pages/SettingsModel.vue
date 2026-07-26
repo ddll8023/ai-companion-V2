@@ -76,6 +76,14 @@
           </div>
         </div>
 
+        <label class="mb-4 flex items-start gap-3 p-3 border border-border rounded-lg cursor-pointer hover:bg-hover/40">
+          <input v-model="form.enable_reasoning" type="checkbox" class="mt-0.5 accent-primary" />
+          <span>
+            <span class="block text-sm font-medium text-text">显示模型推理过程</span>
+            <span class="block mt-0.5 text-xs text-text-tertiary">开启后，模型返回的推理片段会在对话中单独显示并保存；默认关闭。</span>
+          </span>
+        </label>
+
         <div class="flex items-center gap-3">
           <button
             class="px-4 py-2 text-sm font-medium text-white bg-primary rounded-lg hover:bg-primary-dark transition-colors disabled:opacity-50"
@@ -135,6 +143,9 @@
                 <div class="flex items-center gap-4 text-sm text-text-secondary">
                   <span>{{ providers[config.provider] || config.provider }}</span>
                   <span class="font-mono">{{ config.model_name }}</span>
+                  <span class="text-xs" :class="config.enable_reasoning ? 'text-primary' : 'text-text-tertiary'">
+                    {{ config.enable_reasoning ? '显示推理' : '不显示推理' }}
+                  </span>
                   <span v-if="config.api_base" class="truncate max-w-xs">{{ config.api_base }}</span>
                 </div>
                 <p v-if="config.error_message" class="mt-1 text-xs text-error truncate">
@@ -333,6 +344,7 @@ const form = ref<ModelConfigCreate>({
   provider: '',
   model_name: '',
   api_base: '',
+  enable_reasoning: false,
 })
 
 // ── 测试连接 ──
@@ -389,7 +401,7 @@ async function fetchProviders() {
 // ── 表单操作 ──
 function openCreateForm() {
   editingId.value = null
-  form.value = { name: '', provider: '', model_name: '', api_base: '' }
+  form.value = { name: '', provider: '', model_name: '', api_base: '', enable_reasoning: false }
   formError.value = null
   showForm.value = true
 }
@@ -401,6 +413,7 @@ function editConfig(config: ModelConfig) {
     provider: config.provider,
     model_name: config.model_name,
     api_base: config.api_base || '',
+    enable_reasoning: config.enable_reasoning,
   }
   formError.value = null
   showForm.value = true

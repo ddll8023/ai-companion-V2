@@ -70,7 +70,7 @@
 
         <!-- 对话活跃度 -->
         <div class="p-4 bg-surface border border-border rounded-lg">
-          <h4 class="text-xs font-medium text-text-secondary mb-3">对话活跃度</h4>
+          <h4 class="text-xs font-medium text-text-secondary mb-3">用户对话活跃度</h4>
           <div v-if="statsLoading" class="text-xs text-text-tertiary text-center py-4">加载中...</div>
           <div v-else-if="statsData.chat_activity.length === 0" class="text-xs text-text-tertiary text-center py-4">暂无数据</div>
           <div v-else class="space-y-1">

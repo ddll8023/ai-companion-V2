@@ -44,6 +44,7 @@ export interface ElectronAPI {
     data: ChatStreamRequest,
     callbacks: {
       onToken: (content: string) => void;
+      onReasoning: (content: string) => void;
       onDone: (messageId: number | null) => void;
       onError: (message: string) => void;
     },

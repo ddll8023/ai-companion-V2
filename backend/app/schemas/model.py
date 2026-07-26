@@ -14,6 +14,7 @@ class ModelConfigCreate(BaseModel):
     provider: str = Field(..., max_length=32, description="模型供应商: openai/anthropic/openai-compatible")
     model_name: str = Field(..., max_length=128, description="模型名称")
     api_base: str | None = Field(None, max_length=256, description="API 地址（可选）")
+    enable_reasoning: bool = Field(False, description="是否展示并保存模型推理过程")
 
 
 class ModelConfigUpdate(BaseModel):
@@ -23,6 +24,7 @@ class ModelConfigUpdate(BaseModel):
     provider: str | None = Field(None, max_length=32, description="模型供应商")
     model_name: str | None = Field(None, max_length=128, description="模型名称")
     api_base: str | None = Field(None, max_length=256, description="API 地址")
+    enable_reasoning: bool | None = Field(None, description="是否展示并保存模型推理过程")
     has_key: bool | None = Field(None, description="密钥是否已配置")
 
 
@@ -34,6 +36,7 @@ class ModelConfigResponse(BaseModel):
     provider: str
     model_name: str
     api_base: str | None = None
+    enable_reasoning: bool = False
     is_active: bool
     has_key: bool
     status: str

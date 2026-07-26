@@ -157,7 +157,7 @@
     </div>
 
     <!-- 关键功能状态提示 -->
-    <div v-if="!steps.modelConfigured && !showWelcome" class="mb-6 p-4 bg-warning/10 border border-warning/20 rounded-lg">
+    <div v-if="modelConfigurationLoaded && !steps.modelConfigured && !showWelcome" class="mb-6 p-4 bg-warning/10 border border-warning/20 rounded-lg">
       <div class="flex items-center gap-3">
         <font-awesome-icon :icon="['fas', 'exclamation-triangle']" class="text-warning" />
         <div>
@@ -224,13 +224,13 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, reactive } from 'vue'
+import { onMounted, ref, reactive, watch } from 'vue'
 import { useAppStore } from '@/stores/app'
-import type { ModelConfig } from '@/types/api'
 import * as modelApi from '@/api/model'
 import * as memoryApi from '@/api/memory'
 import * as activityApi from '@/api/activity'
 import * as goalApi from '@/api/goal'
+import * as chatApi from '@/api/chat'
 import ErrorState from '@/components/custom/ErrorState.vue'
 
 const appStore = useAppStore()
@@ -246,6 +246,8 @@ const steps = reactive({
 })
 
 const modelConfigured = ref(false)
+// 仅在成功取得模型状态后显示“未配置”提示，避免应用启动时后端尚未就绪造成误报。
+const modelConfigurationLoaded = ref(false)
 const pendingMemories = ref(0)
 const pendingTasks = ref(0)
 const todayActivities = ref(0)
@@ -253,6 +255,7 @@ const hasPendingTasks = ref(false)
 
 // 首次启动引导是否已关闭（localStorage 持久化）
 const showWelcome = ref(false)
+let isInitializing = false
 
 function dismissWelcome() {
   showWelcome.value = false
@@ -263,11 +266,14 @@ function dismissWelcome() {
 
 // ── 初始化 ──
 async function initDashboard() {
+  if (isInitializing) return
+  isInitializing = true
   error.value = null
   try {
     // 并行查询关键状态
-    const [configsRes, memoriesRes, tasksRes, activitiesRes] = await Promise.allSettled([
-      modelApi.listConfigs(),
+    const [activeConfigRes, sessionsRes, memoriesRes, tasksRes, activitiesRes] = await Promise.allSettled([
+      modelApi.getActiveConfig(),
+      chatApi.listSessions(),
       memoryApi.listMemories({ status: 'candidate', page: 1, page_size: 1 }),
       // 待完成任务（状态 0=待处理）
       goalApi.listTasks({ status: 0, page: 1, page_size: 1 }),
@@ -276,14 +282,19 @@ async function initDashboard() {
     await appStore.fetchHealth()
 
     // 模型配置状态
-    if (configsRes.status === 'fulfilled') {
-      const configs = configsRes.value.data?.lists || []
-      modelConfigured.value = (configs as ModelConfig[]).some(c => c.status === 'active')
+    if (activeConfigRes.status === 'fulfilled') {
+      const activeConfig = activeConfigRes.value.data
+      // 与实际对话能力保持一致：必须存在已激活且已保存密钥的配置。
+      modelConfigured.value = Boolean(activeConfig?.is_active && activeConfig.has_key)
       steps.modelConfigured = modelConfigured.value
+      modelConfigurationLoaded.value = true
     }
 
-    // 会话状态（通过 store 判断）
-    steps.sessionCreated = appStore.hasSession
+    // 会话状态从持久化记录读取，而非只依赖本次运行时的 store。
+    if (sessionsRes.status === 'fulfilled') {
+      steps.sessionCreated = (sessionsRes.value.data?.length || 0) > 0
+      appStore.hasSession = steps.sessionCreated
+    }
 
     // 待确认记忆
     if (memoriesRes.status === 'fulfilled') {
@@ -306,13 +317,23 @@ async function initDashboard() {
     // 面板在所有步骤完成或用户手动关闭后才消失
     const dismissed = localStorage.getItem(WELCOME_DISMISSED_KEY)
     const allCoreStepsDone = steps.modelConfigured && steps.sessionCreated
-    showWelcome.value = !allCoreStepsDone && dismissed !== 'true'
+    showWelcome.value = modelConfigurationLoaded.value && !allCoreStepsDone && dismissed !== 'true'
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : '加载概览数据失败'
+  } finally {
+    isInitializing = false
   }
 }
 
 onMounted(() => {
   initDashboard()
+})
+
+// Electron 启动时 Dashboard 可能先于后端服务挂载。服务就绪后重新加载，
+// 避免首次请求失败被错误地渲染为“模型未配置”。
+watch(() => appStore.backendReady, (ready) => {
+  if (ready && !modelConfigurationLoaded.value) {
+    initDashboard()
+  }
 })
 </script>

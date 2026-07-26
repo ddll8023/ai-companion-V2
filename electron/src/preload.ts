@@ -90,6 +90,7 @@ const api = {
     data: { sessionId: number; content: string; configId: number },
     callbacks: {
       onToken: (content: string) => void;
+      onReasoning: (content: string) => void;
       onDone: (messageId: number | null) => void;
       onError: (message: string) => void;
     },
@@ -97,6 +98,8 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, eventData: any) => {
       if (eventData.type === 'token' && eventData.content) {
         callbacks.onToken(eventData.content);
+      } else if (eventData.type === 'reasoning_token' && eventData.content) {
+        callbacks.onReasoning(eventData.content);
       } else if (eventData.type === 'done') {
         callbacks.onDone(eventData.message_id ?? null);
       } else if (eventData.type === 'error') {

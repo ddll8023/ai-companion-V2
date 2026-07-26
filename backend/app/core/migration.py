@@ -28,8 +28,12 @@ _VERSION_TABLE = "_db_version"
 #   v6 — 添加: data_exports, backup_records, retention_policies (数据治理模块)
 #   v7 — 添加: memories.embedding (向量嵌入 BLOB 列)
 #   v8 — 添加: audit_logs 字段 (actor_id, actor_name, ip_address)
+#   v9 — 添加: messages.reasoning_content（模型推理过程）
+#   v10 — 添加: model_configs.enable_reasoning（推理展示开关）
+#   v11 — 添加: memory_sources.evidence_text（用户原文证据）
+#   v12 — 添加: conversation_turns/session_summaries/ai_artifacts（内容治理）
 #
-_CURRENT_VERSION: int = 8
+_CURRENT_VERSION: int = 12
 
 
 def _ensure_version_table(db: Session):
@@ -164,6 +168,61 @@ def _migrate_v7_to_v8(db: Session) -> None:
             logger.info("迁移 v7→v8: audit_logs 表增加 %s 列", col_name)
 
 
+def _migrate_v8_to_v9(db: Session) -> None:
+    """v8 → v9: messages 表增加可选的推理过程字段。"""
+    from sqlalchemy import inspect
+
+    inspector = inspect(db.get_bind())
+    columns = [col["name"] for col in inspector.get_columns("messages")]
+    if "reasoning_content" not in columns:
+        db.execute(text("ALTER TABLE messages ADD COLUMN reasoning_content TEXT"))
+        db.commit()
+        logger.info("迁移 v8→v9: messages 表增加 reasoning_content 列")
+    else:
+        logger.info("迁移 v8→v9: reasoning_content 列已存在，跳过")
+
+
+def _migrate_v9_to_v10(db: Session) -> None:
+    """v9 → v10: 模型配置增加推理展示开关。"""
+    from sqlalchemy import inspect
+
+    inspector = inspect(db.get_bind())
+    columns = [col["name"] for col in inspector.get_columns("model_configs")]
+    if "enable_reasoning" not in columns:
+        db.execute(text(
+            "ALTER TABLE model_configs "
+            "ADD COLUMN enable_reasoning BOOLEAN NOT NULL DEFAULT 0"
+        ))
+        db.commit()
+        logger.info("迁移 v9→v10: model_configs 表增加 enable_reasoning 列")
+    else:
+        logger.info("迁移 v9→v10: enable_reasoning 列已存在，跳过")
+
+
+def _migrate_v10_to_v11(db: Session) -> None:
+    """v10 → v11: 记忆来源增加用户原文证据字段。"""
+    from sqlalchemy import inspect
+
+    inspector = inspect(db.get_bind())
+    columns = [col["name"] for col in inspector.get_columns("memory_sources")]
+    if "evidence_text" not in columns:
+        db.execute(text(
+            "ALTER TABLE memory_sources ADD COLUMN evidence_text VARCHAR(512)"
+        ))
+        db.commit()
+        logger.info("迁移 v10→v11: memory_sources 表增加 evidence_text 列")
+    else:
+        logger.info("迁移 v10→v11: evidence_text 列已存在，跳过")
+
+
+def _migrate_v11_to_v12(db: Session) -> None:
+    """v11 → v12: 创建对话轮次、会话摘要和 AI 内容项表。"""
+    from app.models.conversation import AiArtifact, ConversationTurn, SessionSummary  # noqa: F401
+    from app.core.database import Base
+    Base.metadata.create_all(bind=db.get_bind())
+    logger.info("迁移 v11→v12: 创建内容治理相关表")
+
+
 # 迁移注册表：key=目标版本号，value=迁移函数
 _VERSION_MIGRATIONS: dict[int, Callable[[Session], None]] = {
     2: _migrate_v1_to_v2,
@@ -173,6 +232,10 @@ _VERSION_MIGRATIONS: dict[int, Callable[[Session], None]] = {
     6: _migrate_v5_to_v6,
     7: _migrate_v6_to_v7,
     8: _migrate_v7_to_v8,
+    9: _migrate_v8_to_v9,
+    10: _migrate_v9_to_v10,
+    11: _migrate_v10_to_v11,
+    12: _migrate_v11_to_v12,
 }
 
 

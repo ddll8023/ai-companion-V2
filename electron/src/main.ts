@@ -436,6 +436,8 @@ const API_ACCESS_RULES = {
   write: {
     allowedPathPrefixes: [
       '/api/v1/activities/',
+      '/api/v1/ai-artifacts',
+      '/api/v1/ai-artifacts/',
       '/api/v1/audit/list',
       '/api/v1/chat/sessions',
       '/api/v1/data/backup',
@@ -678,6 +680,7 @@ function setupIpcHandlers(): void {
       (res: any) => {
         let buffer = '';
         let collectedContent = '';
+        let collectedReasoning = '';
 
         res.on('data', (chunk: string) => {
           buffer += chunk.toString();
@@ -693,6 +696,11 @@ function setupIpcHandlers(): void {
                     collectedContent += eventData.content;
                     event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
                       type: 'token', content: eventData.content,
+                    });
+                  } else if (eventData.type === 'reasoning_token' && eventData.content) {
+                    collectedReasoning += eventData.content;
+                    event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
+                      type: 'reasoning_token', content: eventData.content,
                     });
                   } else if (eventData.type === 'done') {
                     event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {

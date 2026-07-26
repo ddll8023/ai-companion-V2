@@ -47,6 +47,7 @@ class MessageResponse(BaseModel):
     session_id: int
     role: str
     content: str
+    reasoning_content: str | None = None
     status: str
     error_message: str | None = None
     model_name: str | None = None
@@ -73,7 +74,7 @@ class ChatRequest(BaseModel):
 class ChatEvent(BaseModel):
     """流式事件。"""
 
-    type: str = Field(..., description="事件类型: token/done/error")
-    content: str | None = Field(None, description="token 内容（type=token 时）")
+    type: str = Field(..., description="事件类型: token/reasoning_token/done/error")
+    content: str | None = Field(None, description="token 内容（type=token/reasoning_token 时）")
     message_id: int | None = Field(None, description="消息 ID（type=done 时）")
     message: str | None = Field(None, description="错误信息（type=error 时）")

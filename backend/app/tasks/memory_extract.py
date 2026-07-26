@@ -17,11 +17,10 @@ from __future__ import annotations
 
 import json
 
-from sqlalchemy import desc, select
-
 from app.core import api_key_cache
 from app.core.database import get_background_db_session
 from app.models.chat import Message
+from app.prompts.memory import MEMORY_EXTRACTION_SYSTEM_PROMPT
 from app.schemas.memory import MemoryCreate
 from app.services import memory as services_memory
 from app.services import model_provider
@@ -30,21 +29,6 @@ from app.tasks.registry import register_handler
 from app.utils.logger_config import setup_logger
 
 logger = setup_logger(__name__)
-
-_MEMORY_EXTRACT_SYSTEM_PROMPT = (
-    "你是一个记忆提取助手。请阅读以下对话内容，提取其中有长期价值的、关于用户的重要信息。\n\n"
-    "提取要求：\n"
-    "1. 只提取对长期理解用户有帮助的信息，如：用户提到的个人信息、偏好、习惯、重要事件、目标、观点等\n"
-    "2. 每个记忆应当是一条独立的重要信息\n"
-    "3. 用简洁明确的中文描述记忆内容\n"
-    "4. 为每条记忆判断类型和重要性（1-10，越高越重要）\n"
-    "5. 不要提取临时性、一次性或无关的信息\n"
-    "6. 如果对话中没有值得提取的信息，返回空列表\n\n"
-    "请以 JSON 格式返回，格式为：\n"
-    '{"memories": [{"content": "...", "type": "fact|preference|event|goal|habit", "importance": 5}]}\n\n'
-    "只返回 JSON，不要包含其他说明文字。"
-)
-
 
 @register_handler("memory.extract")
 def handle_memory_extract(payload: dict | None) -> str | None:
@@ -78,73 +62,53 @@ def handle_memory_extract(payload: dict | None) -> str | None:
             return json.dumps({"extracted": 0, "error": "API Key 不可用（可能已过期）"})
 
         # 检查来源是否仍然有效
-        source_ids = []
-        for mid in [user_message_id, assistant_message_id]:
-            if mid:
-                source_ids.append(mid)
+        # 用户消息是唯一可用于生成用户事实的来源。助手消息仅用于 API Key 缓存定位，
+        # 不能作为长期记忆或画像的证据。
+        source_ids = [user_message_id] if user_message_id else []
 
         if not services_memory.check_source_valid(db, session_id, source_version, source_ids):
             logger.info(f"记忆提取跳过: 来源内容已变更或删除, session_id={session_id}")
             return json.dumps({"extracted": 0, "reason": "来源内容已变更或删除"})
 
-        # 获取该会话最近的多条对话内容作为上下文
-        messages = _get_conversation_messages(db, session_id)
-        if not messages:
-            logger.info(f"记忆提取: 没有可用的对话内容, session_id={session_id}")
-            return json.dumps({"extracted": 0, "reason": "无可用的对话内容"})
+        # 仅处理当前轮的用户消息，避免重复扫描历史及助手内容污染用户事实。
+        user_message = _get_user_message_for_extraction(
+            db, session_id, user_message_id,
+        )
+        if user_message is None:
+            logger.info(f"记忆提取: 没有可用的用户消息, session_id={session_id}")
+            return json.dumps({"extracted": 0, "reason": "无可用的用户消息"})
 
         # 调用模型提取记忆
-        return _do_extract(db, session_id, messages, source_ids, source_version, api_key)
+        return _do_extract(
+            db, session_id, user_message, user_message_id,
+            source_version, api_key,
+        )
 
 
-def _get_conversation_messages(
+def _get_user_message_for_extraction(
     db,
     session_id: int,
-    max_messages: int = 6,
-) -> str:
-    """获取该会话最近的多条对话内容。
-
-    使用最近的多轮对话作为上下文，帮助模型更准确地判断哪些信息值得记忆。
-    默认取最近 6 条消息（约 3 轮对话）。
-
-    Args:
-        db: 数据库会话
-        session_id: 会话 ID
-        max_messages: 最大消息条数
-
-    Returns:
-        拼接后的对话文本
-    """
-    messages = db.scalars(
-        select(Message)
-        .where(
-            Message.session_id == session_id,
-            Message.status == "completed",
-        )
-        .order_by(desc(Message.id))
-        .limit(max_messages)
-    ).all()
-
-    if not messages:
-        return ""
-
-    # 按 ID 正序排列以保持对话顺序
-    messages.sort(key=lambda m: m.id)
-
-    parts = []
-    for msg in messages:
-        role = "用户" if msg.role == "user" else "助手"
-        content = msg.content[:2000] if msg.content else ""
-        parts.append(f"{role}: {content}")
-
-    return "\n\n".join(parts)
+    message_id: int | None,
+) -> Message | None:
+    """获取当前轮可作为用户事实来源的用户消息。"""
+    if not message_id:
+        return None
+    message = db.get(Message, message_id)
+    if (
+        message is None
+        or message.session_id != session_id
+        or message.role != "user"
+        or message.status != "completed"
+    ):
+        return None
+    return message
 
 
 def _do_extract(
     db,
     session_id: int,
-    conversation_text: str,
-    source_ids: list[int],
+    user_message: Message,
+    user_message_id: int,
     source_version: str | None,
     api_key: str | None = None,
 ) -> str | None:
@@ -161,8 +125,14 @@ def _do_extract(
             model_name=active_config.model_name,
             api_key=api_key,
             api_base=active_config.api_base,
-            system_prompt=_MEMORY_EXTRACT_SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": conversation_text}],
+            system_prompt=MEMORY_EXTRACTION_SYSTEM_PROMPT,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"source_message_id: {user_message_id}\n"
+                    f"用户消息：{user_message.content}"
+                ),
+            }],
         )
 
         if not result_text:
@@ -181,7 +151,18 @@ def _do_extract(
         extracted_count = 0
         for mem in memories_data:
             content = mem.get("content", "").strip()
-            if not content:
+            evidence = mem.get("evidence", "").strip()
+            candidate_source_id = mem.get("source_message_id")
+            if (
+                not content
+                or not evidence
+                or candidate_source_id != user_message_id
+                or evidence not in user_message.content
+            ):
+                logger.info(
+                    "记忆提取跳过: 缺少可验证的用户原文证据, session_id=%s",
+                    session_id,
+                )
                 continue
 
             mem_type = mem.get("type", "fact")
@@ -194,7 +175,8 @@ def _do_extract(
                 session_id=session_id,
                 source_version=source_version,
                 source_type="message",
-                source_ids=source_ids,
+                source_ids=[user_message_id],
+                source_evidence_texts=[evidence],
             )
 
             try:
