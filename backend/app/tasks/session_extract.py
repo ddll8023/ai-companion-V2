@@ -2,7 +2,7 @@
 
 两阶段流程：
 - 阶段一 会话分析：区间内消息 → LLM → 摘要 + 候选记忆（原子保存，摘要作为幂等完成标志）
-- 阶段二 画像演化：现有画像 + 摘要 + 新记忆 → LLM → CREATE/REINFORCE/REVISE 操作指令
+- 阶段二 人物观察提取：同一区间 → 内容观察 + 表达观察 → 可追溯观察记录
 
 处理器注册: @register_handler("session.extract")
 
@@ -29,7 +29,7 @@ from app.models.memory import Memory, MemorySource
 from app.prompts.memory import SESSION_ANALYSIS_SYSTEM_PROMPT
 from app.services import memory as services_memory
 from app.services import model_provider
-from app.services import profile as services_profile
+from app.services import persona as services_persona
 from app.tasks.registry import register_handler
 from app.utils.logger_config import setup_logger
 
@@ -43,7 +43,7 @@ _SUMMARY_MAX_CHARS = 2000
 
 @register_handler("session.extract")
 def handle_session_extract(payload: dict | None) -> str | None:
-    """处理会话级提取任务（阶段一会话分析 → 阶段二画像演化）。"""
+    """处理会话级提取任务（阶段一会话分析 → 阶段二人物观察提取）。"""
     if payload is None:
         return json.dumps({"error": "payload 为空"})
 
@@ -94,16 +94,12 @@ def handle_session_extract(payload: dict | None) -> str | None:
             summary_content = analysis["summary"]
             new_memories = analysis["memories"]
 
-        # ── 阶段二：画像演化 ──
-        profile_stats = services_profile.evolve_profiles(
-            db,
-            api_key=api_key,
-            new_summary=summary_content,
-            new_memories=new_memories,
-            source_session_id=session_id,
+        # ── 阶段二：人物观察提取 ──
+        observation_stats = services_persona.extract_session_observations(
+            db, api_key, session_id, from_message_id, to_message_id,
         )
-        if "error" in profile_stats:
-            raise RuntimeError(f"画像演化失败: {profile_stats['error']}")
+        if "error" in observation_stats:
+            raise RuntimeError(f"人物观察提取失败: {observation_stats['error']}")
 
         # ── 更新水位线（最后一步，全部成功后才推进）──
         session.last_extracted_message_id = to_message_id
@@ -112,7 +108,7 @@ def handle_session_extract(payload: dict | None) -> str | None:
 
         result = {
             "memories_extracted": len(new_memories),
-            "profile_ops": profile_stats,
+            "persona_observations": observation_stats,
         }
         logger.info(f"会话提取完成: session_id={session_id}, result={result}")
         return json.dumps(result, ensure_ascii=False)

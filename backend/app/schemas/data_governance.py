@@ -158,9 +158,12 @@ class DataVolumeStats(BaseModel):
     privacy_rules: int = 0
     goals: int = 0
     tasks: int = 0
-    profiles: int = 0
-    profile_sources: int = 0
-    profile_revisions: int = 0
+    observations: int = 0
+    insights: int = 0
+    insight_evidence: int = 0
+    insight_revisions: int = 0
+    persona_states: int = 0
+    persona_documents: int = 0
     audit_logs: int = 0
     background_tasks: int = 0
     model_configs: int = 0

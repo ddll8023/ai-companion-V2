@@ -100,7 +100,7 @@ class RetentionPolicy(BaseModel):
         nullable=False,
         index=True,
         unique=True,
-        comment="目标数据类型: activities/messages/memories/profiles/audit_logs/backups",
+        comment="目标数据类型: activities/messages/memories/observations/insights/audit_logs/backups",
     )
     retention_days = Column(
         Integer,

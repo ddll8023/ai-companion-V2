@@ -42,7 +42,7 @@ export async function deleteSession(id: number) {
 // ── 会话提取 API ──────────────────────────────────────────────────────────
 
 /**
- * 触发会话级记忆与画像提取（异步后台任务）。
+ * 触发会话级记忆与人物理解提取（异步后台任务）。
  *
  * - Electron 模式：走专用 IPC 通道，API Key 由主进程从 keystore 注入
  * - 浏览器模式：走 HTTP，开发环境下随请求体传入 API Key

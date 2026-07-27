@@ -33,7 +33,7 @@ from app.schemas.reference import MemoryReferenceResponse
 from app.schemas.common import ErrorCode
 from app.schemas.task import TaskCreate
 from app.services import model_provider
-from app.services import profile as services_profile
+from app.services import persona as services_persona
 from app.services import retrieval
 from app.services import task as services_task
 from app.services.audit import record_audit
@@ -288,11 +288,11 @@ def initialize_chat_stream(
         query_text=user_content,
     )
 
-    # 构造系统提示词（画像段落在前，检索记忆段落在后）
+    # 构造系统提示词（人物理解段落在前，检索记忆段落在后）
     base_system_prompt = build_chat_system_prompt(active_config.enable_reasoning)
-    profile_context = services_profile.build_profile_context(db)
-    if profile_context:
-        base_system_prompt = f"{base_system_prompt}\n\n{profile_context}"
+    persona_context = services_persona.build_persona_context(db)
+    if persona_context:
+        base_system_prompt = f"{base_system_prompt}\n\n{persona_context}"
     if memory_context and memory_context.enabled:
         system_prompt = retrieval.build_system_prompt_with_context(
             base_prompt=base_system_prompt,
@@ -487,7 +487,7 @@ def _try_auto_title(
 
 
 def request_session_extract(db: Session, session_id: int, api_key: str | None) -> dict:
-    """校验并创建会话级记忆画像提取后台任务。"""
+    """校验并创建会话级记忆与人物理解提取后台任务。"""
     session = _get_session_or_error(db, session_id)
 
     # API Key：优先请求传入，回退到全局缓存（Electron 模式对话后可用）

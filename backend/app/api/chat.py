@@ -113,7 +113,7 @@ def extract_session(
     db: Annotated[Session, Depends(get_db)],
     body: SessionExtractRequest | None = None,
 ):
-    """触发会话级记忆与画像提取（异步后台任务，返回任务 ID 供轮询）。"""
+    """触发会话级记忆与人物理解提取（异步后台任务，返回任务 ID 供轮询）。"""
     try:
         result = services_chat.request_session_extract(
             db, session_id, body.api_key if body else None,

@@ -50,7 +50,7 @@ export interface ElectronAPI {
     },
   ) => () => void
 
-  /** 触发会话级记忆画像提取（密钥由主进程从 keystore 注入） */
+  /** 触发会话级记忆与人物理解提取（密钥由主进程从 keystore 注入） */
   extractSession: (
     sessionId: number,
     configId: number,

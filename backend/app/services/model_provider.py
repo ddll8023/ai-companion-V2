@@ -45,7 +45,7 @@ _SYNC_CONNECT_TIMEOUT = 10.0    # 建连/连接池等待
 _SYNC_WRITE_TIMEOUT = 30.0      # 请求体写入
 SYNC_TIMEOUT_DEFAULT = 60.0     # 默认读超时
 SYNC_TIMEOUT_SHORT = 20.0       # 在线路径短输出（会话标题）
-SYNC_TIMEOUT_BACKGROUND = 180.0  # 后台长输出（会话分析、画像演化）
+SYNC_TIMEOUT_BACKGROUND = 180.0  # 后台长输出（会话分析、人物理解反思与侧写汇编）
 
 
 def get_supported_providers() -> dict[str, str]:

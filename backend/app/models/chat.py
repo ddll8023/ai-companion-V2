@@ -23,7 +23,7 @@ class ChatSession(BaseModel):
         Integer, nullable=True, comment="提取水位线：最后一条已提取消息 ID",
     )
     last_extracted_at = Column(
-        DateTime, nullable=True, comment="最近一次记忆画像提取完成时间",
+        DateTime, nullable=True, comment="最近一次记忆与人物理解提取完成时间",
     )
 
     __table_args__ = (

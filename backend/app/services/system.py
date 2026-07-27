@@ -48,7 +48,7 @@ def get_database_status(db: Session) -> dict[str, Any]:
         from app.models.data_governance import BackupRecord, DataExport
         from app.models.goal import Goal, Task
         from app.models.memory import Memory
-        from app.models.profile import Profile
+        from app.models.persona import Insight, Observation, PersonaDocument
         from app.models.task import BackgroundTask
 
         # 检查嵌入向量状态
@@ -79,7 +79,9 @@ def get_database_status(db: Session) -> dict[str, Any]:
                 "activities": db.query(Activity).count(),
                 "goals": db.query(Goal).count(),
                 "tasks": db.query(Task).count(),
-                "profiles": db.query(Profile).count(),
+                "insights": db.query(Insight).count(),
+                "observations": db.query(Observation).count(),
+                "persona_documents": db.query(PersonaDocument).count(),
                 "audit_logs": db.query(AuditLog).count(),
                 "background_tasks": db.query(BackgroundTask).count(),
                 "data_exports": db.query(DataExport).count(),

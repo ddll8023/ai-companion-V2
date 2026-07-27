@@ -469,7 +469,9 @@ const volumeItems = [
   { key: 'activities', label: '活动' },
   { key: 'goals', label: '目标' },
   { key: 'tasks', label: '任务' },
-  { key: 'profiles', label: '画像' },
+  { key: 'observations', label: '人物观察' },
+  { key: 'insights', label: '人物洞见' },
+  { key: 'persona_documents', label: '人物侧写' },
   { key: 'audit_logs', label: '审计日志' },
   { key: 'background_tasks', label: '后台任务' },
 ]
@@ -506,7 +508,9 @@ const targetTypeOptions = [
   { value: 'activities', label: '活动记录' },
   { value: 'messages', label: '消息记录' },
   { value: 'memories', label: '记忆数据' },
-  { value: 'profiles', label: '画像数据' },
+  { value: 'observations', label: '人物观察数据' },
+  { value: 'insights', label: '人物洞见数据' },
+  { value: 'persona_documents', label: '人物侧写数据' },
   { value: 'audit_logs', label: '审计日志' },
   { value: 'backups', label: '备份记录' },
 ]
@@ -744,7 +748,9 @@ function targetTypeLabel(type: string): string {
     activities: '活动记录',
     messages: '消息记录',
     memories: '记忆数据',
-    profiles: '画像数据',
+    observations: '人物观察数据',
+    insights: '人物洞见数据',
+    persona_documents: '人物侧写数据',
     audit_logs: '审计日志',
     backups: '备份记录',
   }

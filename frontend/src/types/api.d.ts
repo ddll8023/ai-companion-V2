@@ -234,7 +234,61 @@ export interface MemoryListQuery {
   page_size?: number
 }
 
-// ElectronAPI 接口定义在 electron.d.ts 中，此处不再重复。
+// ── 人物理解类型 ───────────────────────────────────────────────────────────
+
+export interface Observation {
+  id: number
+  observation_type: string
+  dimension: string
+  content: string
+  session_id: number | null
+  source_message_id: number | null
+  evidence: string
+  reflected_at: string | null
+  is_deleted: boolean
+  created_at: string | null
+}
+
+export interface Insight {
+  id: number
+  insight_type: string
+  dimension: string
+  content: string
+  abstraction_level: number
+  maturity: 'emerging' | 'developing' | 'established' | 'declining' | 'superseded' | 'rejected'
+  confidence: number
+  stability_score: number
+  support_count: number
+  contradiction_count: number
+  user_override: boolean
+  version: number
+  created_at: string | null
+  updated_at: string | null
+}
+
+export interface PersonaDocument {
+  id: number
+  content: string
+  structured_sections: Record<string, unknown>
+  user_edited_sections: Record<string, unknown>
+  cited_insight_ids: number[]
+  version: number
+  is_active: boolean
+  change_summary: string | null
+  edited_by: string
+  is_pending_review: boolean
+  created_at: string | null
+}
+
+export interface PersonaListQuery {
+  dimension?: string
+  maturity?: string
+  observation_type?: string
+  page?: number
+  page_size?: number
+}
+
+
 
 // ── 目标与任务类型 ──────────────────────────────────────────────────────────
 
@@ -470,92 +524,7 @@ export interface PlatformCapabilitiesResponse {
   capabilities: PlatformCapability[]
 }
 
-// ── 画像类型 ────────────────────────────────────────────────────────────────────
-
-/** 画像特征 */
-export interface Profile {
-  id: number
-  category: string
-  content: string
-  confidence: number
-  status: 'candidate' | 'confirmed' | 'corrected' | 'rejected' | 'deleted'
-  is_auto_extracted: number
-  version: number
-  error_message: string | null
-  created_at: string | null
-  updated_at: string | null
-}
-
-/** 画像来源 */
-export interface ProfileSource {
-  id: number
-  profile_id: number
-  source_type: string
-  memory_id: number | null
-  content_preview: string | null
-  evidence_text: string | null
-  created_at: string | null
-}
-
-/** 画像修订历史 */
-export interface ProfileRevision {
-  id: number
-  profile_id: number
-  previous_category: string | null
-  previous_content: string
-  previous_confidence: number | null
-  previous_status: string | null
-  changed_by: string
-  created_at: string | null
-}
-
-/** 画像详情 */
-export interface ProfileDetail {
-  profile: Profile
-  sources: ProfileSource[]
-  revisions: ProfileRevision[]
-}
-
-/** 创建画像请求 */
-export interface ProfileCreate {
-  category: string
-  content: string
-  confidence?: number
-  is_auto_extracted?: number
-  memory_ids?: number[]
-  evidence_texts?: string[]
-}
-
-/** 纠正画像请求 */
-export interface ProfileCorrect {
-  category: string
-  content: string
-  confidence: number
-}
-
-/** 画像列表查询参数 */
-export interface ProfileListQuery {
-  category?: string
-  status?: string
-  keyword?: string
-  is_auto_extracted?: number
-  page?: number
-  page_size?: number
-}
-
-/** 行为统计查询参数 */
-export interface BehaviorStatsQuery {
-  days?: number
-}
-
-/** 行为统计响应 */
-export interface BehaviorStatsResponse {
-  active_hours: { hour: number; count: number }[]
-  app_usage: { app_name: string; total_minutes: number; percentage: number }[]
-  chat_activity: { date: string; message_count: number }[]
-}
-
-// ── 数据治理类型 ──────────────────────────────────────────────────────────────
+// ── 数据治理类型 ──────────────────────────────────────────────────────────────// ── 数据治理类型 ──────────────────────────────────────────────────────────────
 
 /** 数据导出请求 */
 export interface DataExportRequest {
@@ -668,9 +637,12 @@ export interface DataVolumeStats {
   privacy_rules: number
   goals: number
   tasks: number
-  profiles: number
-  profile_sources: number
-  profile_revisions: number
+  observations: number
+  insights: number
+  insight_evidence: number
+  insight_revisions: number
+  persona_states: number
+  persona_documents: number
   audit_logs: number
   background_tasks: number
   model_configs: number

@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
     # 数据库就绪后启动后台任务调度器
     if app_state.db_ready:
         try:
-            from app.tasks import session_extract  # 注册会话级提取任务处理器
+            from app.tasks import persona_compile, persona_reflect, session_extract  # 注册后台任务处理器
             from app.tasks.scheduler import TaskScheduler
             app_state.task_scheduler = TaskScheduler(poll_interval=2.0, recovery_interval=60.0)
             app_state.task_scheduler.start()
@@ -121,7 +121,7 @@ from app.api import data as api_data
 from app.api import goals as api_goals
 from app.api import memories as api_memories
 from app.api import models as api_models
-from app.api import profiles as api_profiles
+from app.api import persona as api_persona
 from app.api import retrieval as api_retrieval
 from app.api import statistics as api_statistics
 from app.api import system as api_system
@@ -135,7 +135,7 @@ app.include_router(api_data.router)
 app.include_router(api_goals.router)
 app.include_router(api_memories.router)
 app.include_router(api_models.router)
-app.include_router(api_profiles.router)
+app.include_router(api_persona.router)
 app.include_router(api_retrieval.router)
 app.include_router(api_statistics.router)
 app.include_router(api_system.router)

@@ -19,7 +19,7 @@
           v-if="extractableSessions.length > 0"
           class="w-full flex items-center justify-center gap-2 px-4 py-1.5 text-xs font-medium rounded-lg border border-border text-text-secondary hover:text-primary hover:border-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           :disabled="hasActiveExtracts"
-          :title="hasActiveExtracts ? '正在提取中' : '对全部有新消息的会话提取记忆与画像'"
+          :title="hasActiveExtracts ? '正在提取中' : '对全部有新消息的会话提取记忆与人物理解'"
           @click="handleExtractAll"
         >
           <font-awesome-icon
@@ -68,7 +68,7 @@
                 v-if="sessionExtracting(sess)"
                 :icon="['fas', 'spinner']"
                 class="ml-auto flex-shrink-0 text-xs text-primary animate-spin"
-                title="正在提取记忆与画像"
+                title="正在提取记忆与人物理解"
               />
               <span
                 v-else-if="(sess.extractable_message_count ?? 0) > 0"
@@ -83,7 +83,7 @@
               v-if="(sess.extractable_message_count ?? 0) > 0 && !sessionExtracting(sess)"
               class="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded text-text-tertiary opacity-100 md:opacity-0 md:group-hover:opacity-100 hover:bg-primary/10 hover:text-primary focus:opacity-100 transition-all disabled:cursor-not-allowed"
               :disabled="isGenerating && currentSessionId === sess.id"
-              :title="isGenerating && currentSessionId === sess.id ? '生成中不能提取' : '提取记忆与画像'"
+              :title="isGenerating && currentSessionId === sess.id ? '生成中不能提取' : '提取记忆与人物理解'"
               @click.stop="requestExtract(sess.id)"
             >
               <font-awesome-icon :icon="['fas', 'wand-magic-sparkles']" class="text-xs" />
@@ -133,7 +133,7 @@
             :class="extractInProgress ? 'animate-spin' : ''"
             class="text-xs"
           />
-          {{ extractInProgress ? '提取中…' : '提取记忆与画像' }}
+          {{ extractInProgress ? '提取中…' : '提取记忆与人物理解' }}
         </button>
       </div>
 
@@ -428,7 +428,7 @@ const extractTasks = ref<Record<number, number>>({})
 const extractNotice = ref<{ type: 'success' | 'error'; text: string } | null>(null)
 let extractPollTimer: number | null = null
 // 本轮批次的结果累计（全部任务完成后生成汇总提示）
-let extractBatchStats = { sessions: 0, memories: 0, created: 0, reinforced: 0, revised: 0, errors: [] as string[] }
+let extractBatchStats = { sessions: 0, memories: 0, created: 0, errors: [] as string[] }
 
 const messagesContainer = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
@@ -493,9 +493,9 @@ const hasActiveExtracts = computed(() => {
 })
 
 const extractButtonTitle = computed(() => {
-  if (extractInProgress.value) return '正在提取记忆与画像'
+  if (extractInProgress.value) return '正在提取记忆与人物理解'
   if ((currentSession.value?.extractable_message_count ?? 0) === 0) return '暂无可提取的新对话'
-  return '对当前会话的新增对话提取记忆与画像'
+  return '对当前会话的新增对话提取记忆与人物理解'
 })
 
 // ── 生命周期 ──────────────────────────────────────────────────────────────
@@ -874,10 +874,8 @@ function accumulateExtractResult(resultJson: string | null) {
     }
     extractBatchStats.sessions += 1
     extractBatchStats.memories += result.memories_extracted ?? 0
-    const ops = result.profile_ops || {}
+    const ops = result.persona_observations || {}
     extractBatchStats.created += ops.created ?? 0
-    extractBatchStats.reinforced += ops.reinforced ?? 0
-    extractBatchStats.revised += ops.revised ?? 0
   } catch {
     extractBatchStats.sessions += 1
   }
@@ -886,7 +884,7 @@ function accumulateExtractResult(resultJson: string | null) {
 function finishExtractBatch() {
   stopExtractPolling()
   const stats = extractBatchStats
-  extractBatchStats = { sessions: 0, memories: 0, created: 0, reinforced: 0, revised: 0, errors: [] }
+  extractBatchStats = { sessions: 0, memories: 0, created: 0, errors: [] }
 
   if (stats.sessions === 0 && stats.errors.length === 0) return
 
@@ -896,8 +894,7 @@ function finishExtractBatch() {
   }
 
   let text = `完成 ${stats.sessions} 个会话提取：新增候选记忆 ${stats.memories} 条，` +
-    `画像新增 ${stats.created} / 强化 ${stats.reinforced} / 修正 ${stats.revised}，` +
-    `可前往「长期记忆」和「用户理解」页面审查`
+    `新增人物观察 ${stats.created} 条，可前往「长期记忆」和「用户理解」页面查看`
   if (stats.errors.length > 0) {
     text += `（${stats.errors.length} 个失败：${stats.errors.join('；')}）`
   }

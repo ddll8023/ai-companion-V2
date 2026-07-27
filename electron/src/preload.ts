@@ -120,7 +120,7 @@ const api = {
     };
   },
 
-  /** 触发会话级记忆画像提取（密钥由主进程注入，Renderer 不持有密钥） */
+  /** 触发会话级记忆与人物理解提取（密钥由主进程注入，Renderer 不持有密钥） */
   extractSession: (
     sessionId: number,
     configId: number,

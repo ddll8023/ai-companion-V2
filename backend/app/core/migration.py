@@ -31,12 +31,10 @@ _VERSION_TABLE = "_db_version"
 #   v9 — 添加: messages.reasoning_content（模型推理过程）
 #   v10 — 添加: model_configs.enable_reasoning（推理展示开关）
 #   v11 — 添加: memory_sources.evidence_text（用户原文证据）
-#   v12 — 添加: conversation_turns/session_summaries/ai_artifacts（内容治理）
-#   v13 — 会话级提取重构: sessions 水位线字段、session_summaries 改消息区间、
-#         profiles.supersedes_profile_id；删除 memories/profiles/background_tasks
-#         的 source_version 列（结构变更，删除旧库重建，无迁移函数）
-#
-_CURRENT_VERSION: int = 13
+#   v13 — 会话级提取字段调整（新数据库直接重建）
+#   v14 — 新增 observations/insights/insight_evidence/insight_relations/
+#         insight_revisions/persona_states/persona_documents 人物理解体系
+_CURRENT_VERSION: int = 14
 
 
 def _ensure_version_table(db: Session):
@@ -226,6 +224,21 @@ def _migrate_v11_to_v12(db: Session) -> None:
     logger.info("迁移 v11→v12: 创建内容治理相关表")
 
 
+def _migrate_v12_to_v13(db: Session) -> None:
+    """v12 → v13: 会话提取结构调整。"""
+    from app.core.database import Base
+    Base.metadata.create_all(bind=db.get_bind())
+    logger.info("迁移 v12→v13: 同步会话提取结构")
+
+
+def _migrate_v13_to_v14(db: Session) -> None:
+    """v13 → v14: 创建人物理解体系表。"""
+    from app.models.persona import Insight, InsightEvidence, InsightRelation, InsightRevision, Observation, PersonaDocument, PersonaState  # noqa: F401
+    from app.core.database import Base
+    Base.metadata.create_all(bind=db.get_bind())
+    logger.info("迁移 v13→v14: 创建人物理解相关表")
+
+
 # 迁移注册表：key=目标版本号，value=迁移函数
 _VERSION_MIGRATIONS: dict[int, Callable[[Session], None]] = {
     2: _migrate_v1_to_v2,
@@ -239,6 +252,8 @@ _VERSION_MIGRATIONS: dict[int, Callable[[Session], None]] = {
     10: _migrate_v9_to_v10,
     11: _migrate_v10_to_v11,
     12: _migrate_v11_to_v12,
+    13: _migrate_v12_to_v13,
+    14: _migrate_v13_to_v14,
 }
 
 

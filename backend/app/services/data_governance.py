@@ -28,7 +28,7 @@ from app.models.conversation import AiArtifact, ConversationTurn, SessionSummary
 from app.models.data_governance import BackupRecord, DataExport, RetentionPolicy
 from app.models.goal import Goal, Task
 from app.models.memory import Memory, MemoryReference, MemoryRevision, MemorySource
-from app.models.profile import Profile, ProfileRevision, ProfileSource
+from app.models.persona import Insight, InsightEvidence, InsightRevision, Observation, PersonaDocument, PersonaState
 from app.models.system import ModelConfig
 from app.models.task import BackgroundTask
 from app.schemas.common import ErrorCode, PaginatedResponse, PaginationInfo
@@ -92,7 +92,7 @@ def export_data(
         "memories", "memory_sources", "memory_revisions", "memory_references",
         "activities",
         "goals", "tasks",
-        "profiles", "profile_sources", "profile_revisions",
+        "observations", "insights", "insight_evidence", "insight_revisions", "persona_states", "persona_documents",
         "privacy_rules",
         "retention_policies",
     ]
@@ -197,9 +197,12 @@ def _export_module(
         "activities": lambda: _query_all_as_dicts(db, Activity, time_conditions),
         "goals": lambda: _query_all_as_dicts(db, Goal, time_conditions),
         "tasks": lambda: _query_all_as_dicts(db, Task, time_conditions),
-        "profiles": lambda: _query_all_as_dicts(db, Profile, time_conditions),
-        "profile_sources": lambda: _query_all_as_dicts(db, ProfileSource, time_conditions),
-        "profile_revisions": lambda: _query_all_as_dicts(db, ProfileRevision, time_conditions),
+        "observations": lambda: _query_all_as_dicts(db, Observation, time_conditions),
+        "insights": lambda: _query_all_as_dicts(db, Insight, time_conditions),
+        "insight_evidence": lambda: _query_all_as_dicts(db, InsightEvidence, time_conditions),
+        "insight_revisions": lambda: _query_all_as_dicts(db, InsightRevision, time_conditions),
+        "persona_states": lambda: _query_all_as_dicts(db, PersonaState, time_conditions),
+        "persona_documents": lambda: _query_all_as_dicts(db, PersonaDocument, time_conditions),
         "privacy_rules": lambda: _query_all_as_dicts(db, PrivacyRule, time_conditions),
         "retention_policies": lambda: _query_all_as_dicts(db, RetentionPolicy, time_conditions),
     }
@@ -907,7 +910,9 @@ def _cleanup_target_type(db: Session, target_type: str, cutoff: datetime) -> int
         "activities": lambda: _cleanup_activities(db, cutoff),
         "messages": lambda: _cleanup_messages(db, cutoff),
         "memories": lambda: _cleanup_memories(db, cutoff),
-        "profiles": lambda: _cleanup_model_by_time(db, Profile, cutoff),
+        "observations": lambda: _cleanup_model_by_time(db, Observation, cutoff),
+        "insights": lambda: _cleanup_model_by_time(db, Insight, cutoff),
+        "persona_documents": lambda: _cleanup_model_by_time(db, PersonaDocument, cutoff),
         "audit_logs": lambda: _cleanup_model_by_time(db, AuditLog, cutoff),
         "backups": lambda: _cleanup_backups_by_time(db, cutoff),
         "background_tasks": lambda: _cleanup_model_by_time(db, BackgroundTask, cutoff),
@@ -932,7 +937,7 @@ def _cleanup_model_by_time(db: Session, model_class, cutoff: datetime) -> int:
 
 
 def _cleanup_messages(db: Session, cutoff: datetime) -> int:
-    """按时间清理消息（同时清理关联的记忆来源和画像来源）。"""
+    """按时间清理消息（同时清理关联的记忆来源）。"""
     # 先获取要删除的消息 ID
     msg_ids = db.scalars(
         select(Message.id).where(Message.created_at < cutoff)
@@ -964,7 +969,7 @@ def _cleanup_messages(db: Session, cutoff: datetime) -> int:
 
 
 def _cleanup_activities(db: Session, cutoff: datetime) -> int:
-    """按时间清理活动记录（同时清理关联的画像来源）。"""
+    """按时间清理活动记录。"""
     activity_ids = db.scalars(
         select(Activity.id).where(Activity.created_at < cutoff)
     ).all()
@@ -982,7 +987,7 @@ def _cleanup_activities(db: Session, cutoff: datetime) -> int:
 
 
 def _cleanup_memories(db: Session, cutoff: datetime) -> int:
-    """按时间清理记忆（同时清理关联的画像来源引用）。"""
+    """按时间清理记忆。"""
     memory_ids = db.scalars(
         select(Memory.id).where(Memory.created_at < cutoff)
     ).all()
@@ -990,13 +995,7 @@ def _cleanup_memories(db: Session, cutoff: datetime) -> int:
     if not memory_ids:
         return 0
 
-    # 清理画像来源中指向已删除记忆的引用（memory_id 是软引用）
-    db.execute(
-        delete(ProfileSource).where(
-            ProfileSource.source_type == "memory",
-            ProfileSource.memory_id.in_(memory_ids),
-        )
-    )
+    # 观察通过外键级联清理；记忆删除不再删除人物理解证据。
 
     # 清理记忆（级联删除 MemorySource、MemoryRevision、MemoryReference）
     result = db.execute(
@@ -1078,7 +1077,7 @@ def clear_all_data(
         if count > 0:
             cleared_tables.append(table.__tablename__)
 
-    for table in [ProfileRevision, ProfileSource]:
+    for table in [InsightEvidence, InsightRevision]:
         count = db.execute(table.__table__.delete()).rowcount or 0
         if count > 0:
             cleared_tables.append(table.__tablename__)
@@ -1095,7 +1094,7 @@ def clear_all_data(
 
     # 2. 清除主表
     main_tables = [
-        Memory, Profile, ChatSession, Goal, Activity, BackgroundTask,
+        Memory, Observation, Insight, PersonaState, PersonaDocument, ChatSession, Goal, Activity, BackgroundTask,
         AuditLog, ModelConfig, PrivacyRule, DataExport, BackupRecord,
         RetentionPolicy,
     ]
@@ -1167,9 +1166,12 @@ def get_data_volume_stats(db: Session) -> DataVolumeStats:
         "privacy_rules": lambda: db.scalar(select(func.count(PrivacyRule.id))) or 0,
         "goals": lambda: db.scalar(select(func.count(Goal.id))) or 0,
         "tasks": lambda: db.scalar(select(func.count(Task.id))) or 0,
-        "profiles": lambda: db.scalar(select(func.count(Profile.id))) or 0,
-        "profile_sources": lambda: db.scalar(select(func.count(ProfileSource.id))) or 0,
-        "profile_revisions": lambda: db.scalar(select(func.count(ProfileRevision.id))) or 0,
+        "observations": lambda: db.scalar(select(func.count(Observation.id))) or 0,
+        "insights": lambda: db.scalar(select(func.count(Insight.id))) or 0,
+        "insight_evidence": lambda: db.scalar(select(func.count(InsightEvidence.id))) or 0,
+        "insight_revisions": lambda: db.scalar(select(func.count(InsightRevision.id))) or 0,
+        "persona_states": lambda: db.scalar(select(func.count(PersonaState.id))) or 0,
+        "persona_documents": lambda: db.scalar(select(func.count(PersonaDocument.id))) or 0,
         "audit_logs": lambda: db.scalar(select(func.count(AuditLog.id))) or 0,
         "background_tasks": lambda: db.scalar(select(func.count(BackgroundTask.id))) or 0,
         "model_configs": lambda: db.scalar(select(func.count(ModelConfig.id))) or 0,
