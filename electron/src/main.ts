@@ -45,9 +45,6 @@ const ROOT_DIR = isDev
 /** 后端 Python 项目路径 */
 const BACKEND_DIR = path.join(ROOT_DIR, 'backend');
 
-/** Electron 统一确定的数据目录 */
-const DATA_DIR = path.join(app.getPath('userData'), 'data');
-
 /** 安全存储文件路径 */
 const SECURE_STORE_PATH = path.join(app.getPath('userData'), 'secure-store.enc');
 
@@ -172,15 +169,11 @@ function apiRequest(method: string, urlPath: string, body?: unknown): Promise<un
 
 // ── Python 进程管理 ────────────────────────────────────────────────
 
-/** 启动 Python 本地服务 */
-async function startPythonBackend(): Promise<void> {
-  backendPort = await findFreePort();
-  authToken = generateAuthToken();
+	async function startPythonBackend(): Promise<void> {
+	  backendPort = await findFreePort();
+	  authToken = generateAuthToken();
 
-  // 确保数据目录存在
-  fs.mkdirSync(DATA_DIR, { recursive: true });
-
-  console.log(`[Main] 启动本地服务 → 端口: ${backendPort}, 数据目录: ${DATA_DIR}`);
+	  console.log(`[Main] 启动本地服务 → 端口: ${backendPort}`);
 
   // 检测 Python 运行时：优先使用 .venv 下的 Python
   const venvPython = path.join(BACKEND_DIR, '.venv', 'bin', 'python3');
@@ -195,7 +188,6 @@ async function startPythonBackend(): Promise<void> {
   const pythonEnv = {
     ...process.env,
     PORT: String(backendPort),
-    DATA_DIR: DATA_DIR,
     AUTH_TOKEN: authToken,
   };
 
@@ -865,10 +857,6 @@ function createWindow(): void {
 
 app.whenReady().then(async () => {
   console.log('[Main] 应用启动');
-  console.log(`[Main] 数据目录: ${DATA_DIR}`);
-
-  // 确保数据目录存在
-  fs.mkdirSync(DATA_DIR, { recursive: true });
 
   // 创建主窗口
   createWindow();
