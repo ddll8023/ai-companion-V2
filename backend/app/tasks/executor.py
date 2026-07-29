@@ -39,7 +39,12 @@ def execute_task(task_id: int, task_type: str, payload: str | None) -> None:
 
     try:
         result = handler(parsed)
-        result_str = json.dumps(result, ensure_ascii=False) if result is not None else None
+        if isinstance(result, str):
+            result_str = result
+        elif result is not None:
+            result_str = json.dumps(result, ensure_ascii=False)
+        else:
+            result_str = None
         with get_background_db_session() as db:
             services_task.complete_task(db, task_id, result_str)
     except Exception as e:

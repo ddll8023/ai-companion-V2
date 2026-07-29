@@ -53,9 +53,19 @@ def save_observations(db: Session, observations: list[dict], session_id: int | N
         content = str(item.get("content") or "").strip()
         evidence = str(item.get("evidence") or "").strip()
         source_id = item.get("source_message_id")
+        if source_id is not None and not isinstance(source_id, int):
+            try:
+                source_id = int(re.sub(r"\D", "", str(source_id)))
+            except (ValueError, TypeError):
+                source_id = None
         source = db.get(Message, source_id) if isinstance(source_id, int) else None
-        if not content or not evidence or source is None or source.role != "user" or evidence not in source.content:
+        if source is None or source.role != "user":
             continue
+        # 提示词要求 evidence 来自单条消息，但本地 LLM 可能用 ... 拼接多条消息的片段
+        if evidence not in source.content:
+            segments = [s.strip() for s in re.split(r"\.\.\.\s*", evidence) if s.strip()]
+            if not any(seg in source.content for seg in segments):
+                continue
         normalized = re.sub(r"\W+", "", content).casefold()
         if any(SequenceMatcher(None, normalized, re.sub(r"\W+", "", old.content).casefold()).ratio() >= 0.88 for old in recent):
             continue

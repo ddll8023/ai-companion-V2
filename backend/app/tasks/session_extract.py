@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 
 from sqlalchemy import select
@@ -208,17 +209,22 @@ def _validate_memories(
         content = str(mem.get("content") or "").strip()
         evidence = str(mem.get("evidence") or "").strip()
         source_id = mem.get("source_message_id")
+        if source_id is not None and not isinstance(source_id, int):
+            try:
+                source_id = int(re.sub(r"\D", "", str(source_id)))
+            except (ValueError, TypeError):
+                source_id = None
         source_msg = user_messages.get(source_id) if isinstance(source_id, int) else None
-        if (
-            not content
-            or not evidence
-            or source_msg is None
-            or evidence not in source_msg.content
-        ):
-            logger.info(
-                f"候选记忆跳过: 缺少可验证的用户原文证据, session_id={session_id}",
-            )
+        if not content or not evidence or source_msg is None:
+            logger.info(f"候选记忆跳过: 缺少可验证的用户原文证据, session_id={session_id}")
             continue
+
+        # 本地 LLM 可能用 ... 拼接多条消息的 evidence，拆开逐一匹配
+        if evidence not in source_msg.content:
+            segments = [s.strip() for s in re.split(r"\.\.\.\s*", evidence) if s.strip()]
+            if not any(seg in source_msg.content for seg in segments):
+                logger.info(f"候选记忆跳过: 证据不匹配来源消息, session_id={session_id}")
+                continue
 
         mem_type = mem.get("type", "fact")
         if mem_type not in _VALID_MEMORY_TYPES:
