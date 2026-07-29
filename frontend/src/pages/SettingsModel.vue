@@ -74,6 +74,20 @@
               placeholder="留空使用默认地址"
             />
           </div>
+          <div>
+            <label class="block text-sm font-medium text-text mb-1">
+              API 密钥
+              <span v-if="editingId" class="text-text-tertiary font-normal">
+                ({{ hasStoredKey ? '已配置，留空保持不变' : '未配置' }})
+              </span>
+            </label>
+            <input
+              v-model="form.api_key"
+              type="password"
+              class="w-full px-3 py-2 text-sm border border-border rounded-lg bg-bg text-text placeholder-text-tertiary focus:outline-none focus:border-primary"
+              :placeholder="editingId ? (hasStoredKey ? '输入新密钥以替换' : '输入 API 密钥') : '输入 API 密钥'"
+            />
+          </div>
         </div>
 
         <label class="mb-4 flex items-start gap-3 p-3 border border-border rounded-lg cursor-pointer hover:bg-hover/40">
@@ -316,15 +330,12 @@
 
 <script setup lang="ts">
 import { onMounted, ref, computed } from 'vue'
-import type { ModelConfig, ModelConfigCreate, ModelConfigUpdate } from '@/types/api'
+import type { ModelConfig, ModelConfigCreate } from '@/types/api'
 import * as modelApi from '@/api/model'
-import { getAdapter } from '@/composables/useApi'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
 import ConfirmDialog from '@/components/custom/ConfirmDialog.vue'
-
-const adapter = getAdapter()
 
 // ── 供应商列表 ──
 const providers = ref<Record<string, string>>({})
@@ -339,13 +350,17 @@ const showForm = ref(false)
 const editingId = ref<number | null>(null)
 const saving = ref(false)
 const formError = ref<string | null>(null)
-const form = ref<ModelConfigCreate>({
+const form = ref<ModelConfigCreate & { api_key: string }>({
   name: '',
   provider: '',
   model_name: '',
   api_base: '',
+  api_key: '',
   enable_reasoning: false,
 })
+
+/** 当前编辑的配置是否已有存储的密钥（编辑时用于提示） */
+const hasStoredKey = ref(false)
 
 // ── 测试连接 ──
 const testingId = ref<number | null>(null)
@@ -401,7 +416,8 @@ async function fetchProviders() {
 // ── 表单操作 ──
 function openCreateForm() {
   editingId.value = null
-  form.value = { name: '', provider: '', model_name: '', api_base: '', enable_reasoning: false }
+  form.value = { name: '', provider: '', model_name: '', api_base: '', api_key: '', enable_reasoning: false }
+  hasStoredKey.value = false
   formError.value = null
   showForm.value = true
 }
@@ -413,8 +429,10 @@ function editConfig(config: ModelConfig) {
     provider: config.provider,
     model_name: config.model_name,
     api_base: config.api_base || '',
+    api_key: '',
     enable_reasoning: config.enable_reasoning,
   }
+  hasStoredKey.value = config.has_key
   formError.value = null
   showForm.value = true
 }
@@ -430,11 +448,36 @@ async function saveConfig() {
   saving.value = true
   formError.value = null
   try {
+    const { api_key, ...configData } = form.value
+    let configId: number
+
     if (editingId.value) {
-      await modelApi.updateConfig(editingId.value, form.value)
+      await modelApi.updateConfig(editingId.value, configData)
+      configId = editingId.value
     } else {
-      await modelApi.createConfig(form.value)
+      const res = await modelApi.createConfig(configData)
+      configId = res.data.id
     }
+
+    // 如果表单中填写了 API Key，一并保存到安全存储
+    if (api_key) {
+      const isElectron = typeof window !== 'undefined' && window.electronAPI
+      if (isElectron) {
+        const result = await window.electronAPI!.keystoreSet(
+          `model_key_${configId}`,
+          api_key
+        )
+        if (!result.success) {
+          formError.value = result.error || '保存 API Key 失败'
+          return
+        }
+      } else {
+        localStorage.setItem(`model_key_${configId}`, api_key)
+      }
+      // 通知后端 has_key 状态已更新
+      await modelApi.updateConfig(configId, { has_key: true })
+    }
+
     closeForm()
     await fetchConfigs()
   } catch (e: unknown) {

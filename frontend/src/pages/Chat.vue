@@ -223,7 +223,7 @@
                   </details>
                 </div>
 
-                {{ msg.content }}
+                <MarkdownRenderer v-if="msg.content" :content="msg.content" />
                 <!-- 生成中的动画 -->
                 <span
                   v-if="msg.status === 'generating'"
@@ -400,6 +400,7 @@ import { useAppStore } from '@/stores/app'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ConfirmDialog from '@/components/custom/ConfirmDialog.vue'
+import MarkdownRenderer from '@/components/custom/MarkdownRenderer.vue'
 
 // ── 状态 ──────────────────────────────────────────────────────────────────
 
