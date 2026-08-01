@@ -87,6 +87,7 @@ export async function getMessages(sessionId: number) {
  * - 浏览器模式：使用 fetch + SSE（密钥在请求体中，仅用于开发环境）
  *
  * @param configId 模型配置 ID（Electron 模式：主进程据此从 keystore 获取密钥）
+ * @param regenerateMessageId 重新生成模式：替换指定助手消息（从其上一条用户消息重新生成）
  * @param signal 可选 AbortSignal，用于主动中止请求
  */
 export async function streamChat(
@@ -96,12 +97,13 @@ export async function streamChat(
   onEvent: (event: ChatStreamEvent) => void,
   onError: (error: Error) => void,
   signal?: AbortSignal,
+  regenerateMessageId?: number,
 ): Promise<void> {
   // ── Electron 模式：通过 IPC 逐 token 推送 ──
   if (typeof window !== 'undefined' && window.electronAPI) {
     try {
       const cleanup = window.electronAPI.streamChat(
-        { sessionId, content, configId },
+        { sessionId, content, configId, regenerateMessageId },
         {
           onToken: (token: string) => {
             onEvent({ type: 'token', content: token })
@@ -146,7 +148,11 @@ export async function streamChat(
     const response = await fetch(`/api/v1/chat/sessions/${sessionId}/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, api_key: apiKey || undefined }),
+      body: JSON.stringify({
+        content,
+        api_key: apiKey || undefined,
+        regenerate_message_id: regenerateMessageId ?? undefined,
+      }),
       signal,
     })
 

@@ -15,6 +15,8 @@ export interface ChatStreamRequest {
   sessionId: number;
   content: string;
   configId: number;
+  /** 重新生成模式：指定要替换的助手消息 ID（主进程转发给后端） */
+  regenerateMessageId?: number;
 }
 
 export interface ElectronAPI {

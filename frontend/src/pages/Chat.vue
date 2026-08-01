@@ -41,12 +41,43 @@
         配置模型
       </p>
 
+      <!-- 会话搜索 -->
+      <div v-if="sessions.length > 0" class="px-3 pb-1.5">
+        <div class="relative">
+          <font-awesome-icon
+            :icon="['fas', 'search']"
+            class="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-text-tertiary"
+          />
+          <input
+            v-model="sessionSearch"
+            type="text"
+            placeholder="搜索会话..."
+            class="w-full pl-7 pr-7 py-1.5 text-xs border border-border rounded-lg bg-surface text-text placeholder-text-tertiary focus:outline-none focus:border-primary transition-colors"
+          />
+          <button
+            v-if="sessionSearch"
+            class="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text text-xs"
+            title="清除搜索"
+            @click="sessionSearch = ''"
+          >
+            <font-awesome-icon :icon="['fas', 'xmark']" />
+          </button>
+        </div>
+      </div>
+
       <!-- 加载状态 -->
       <LoadingState :loading="loadingSessions" loading-text="加载对话列表...">
         <div class="flex-1 overflow-y-auto px-2 pb-2 space-y-0.5">
-          <div
-            v-for="sess in sessions"
-            :key="sess.id"
+          <template v-for="group in sessionGroups" :key="group.key">
+            <p
+              v-if="group.items.length > 0"
+              class="px-3 pt-2.5 pb-0.5 text-[10px] font-medium text-text-tertiary/70"
+            >
+              {{ group.label }}
+            </p>
+            <div
+              v-for="sess in group.items"
+              :key="sess.id"
             class="group flex items-center gap-1 rounded-lg text-sm transition-colors"
             :class="currentSessionId === sess.id
               ? 'bg-primary-light text-primary-dark font-medium'
@@ -96,13 +127,20 @@
             >
               <font-awesome-icon :icon="['fas', 'trash']" class="text-xs" />
             </button>
-          </div>
+            </div>
+          </template>
 
           <!-- 空状态 -->
           <EmptyState
             :empty="sessions.length === 0 && !loadingSessions"
             empty-text="暂无对话"
           />
+          <p
+            v-if="sessions.length > 0 && sessionGroups.length === 0"
+            class="px-3 py-8 text-center text-xs text-text-tertiary"
+          >
+            没有匹配的会话
+          </p>
         </div>
       </LoadingState>
     </aside>
@@ -159,20 +197,45 @@
       <!-- 欢迎/没有会话时 -->
       <div
         v-if="!currentSessionId"
-        class="flex-1 flex flex-col items-center justify-center text-center px-6"
+        class="flex-1 flex flex-col items-center justify-center text-center px-6 py-10"
       >
         <font-awesome-icon
           :icon="['fas', 'comments']"
-          class="text-5xl text-text-tertiary/30 mb-4"
+          class="text-5xl text-primary/20 mb-5"
         />
         <h3 class="text-lg font-medium text-text mb-2">AI Companion 对话</h3>
-        <p class="text-sm text-text-secondary max-w-md">
-          点击左侧「新建对话」开始新的对话，或选择一个已有会话继续。
+        <p class="text-sm text-text-secondary max-w-md mb-8">
+          开始一段对话，AI 会结合你的记忆与人物侧写给出个性化回应
         </p>
+
+        <!-- 示例问题（点击即新建会话并发送） -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full max-w-2xl mb-6">
+          <button
+            v-for="prompt in suggestedPrompts"
+            :key="prompt.text"
+            class="group p-4 bg-surface border border-border rounded-xl text-left hover:border-primary/50 hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            :disabled="!canChat"
+            @click="handleSuggestedPrompt(prompt.text)"
+          >
+            <font-awesome-icon :icon="['fas', prompt.icon]" class="text-primary/70 text-base mb-2" />
+            <p class="text-sm text-text leading-relaxed">{{ prompt.text }}</p>
+          </button>
+        </div>
+
+        <!-- 快捷入口 -->
+        <div class="flex items-center gap-4 text-xs text-text-tertiary">
+          <router-link to="/memories" class="hover:text-primary transition-colors">
+            <font-awesome-icon :icon="['fas', 'book-open']" class="mr-1" />长期记忆
+          </router-link>
+          <router-link to="/understanding" class="hover:text-primary transition-colors">
+            <font-awesome-icon :icon="['fas', 'user-astronaut']" class="mr-1" />人物理解
+          </router-link>
+        </div>
+
         <!-- 配置提示 -->
         <p
           v-if="!activeConfig"
-          class="mt-4 text-sm text-text-tertiary"
+          class="mt-6 text-sm text-text-tertiary"
         >
           开始之前，请先在
           <router-link to="/settings" class="text-primary underline">模型设置</router-link>
@@ -185,30 +248,48 @@
         <!-- 消息显示区 -->
         <div
           ref="messagesContainer"
-          class="flex-1 overflow-y-auto px-4 md:px-8 py-4 space-y-4"
+          class="relative flex-1 overflow-y-auto px-4 md:px-8 py-4"
+          @scroll="onMessagesScroll"
         >
           <LoadingState :loading="loadingMessages" loading-text="加载消息...">
+            <TransitionGroup name="msg" tag="div" class="h-full space-y-4">
             <div v-if="messages.length === 0" class="flex flex-col items-center justify-center h-full text-center">
               <font-awesome-icon :icon="['fas', 'comment-dots']" class="text-3xl text-text-tertiary/30 mb-3" />
               <p class="text-sm text-text-tertiary">输入消息开始对话</p>
             </div>
 
-            <div
-              v-for="msg in messages"
-              :key="msg.id"
-              class="flex"
-              :class="msg.role === 'user' ? 'justify-end' : 'justify-start'"
-            >
+            <template v-for="row in messageRows" :key="row.key">
+              <!-- 日期分隔线 -->
+              <div v-if="row.type === 'divider'" class="flex items-center gap-3 my-1 select-none">
+                <div class="flex-1 h-px bg-border" />
+                <span class="text-[11px] text-text-tertiary/80">{{ row.label }}</span>
+                <div class="flex-1 h-px bg-border" />
+              </div>
+
+              <!-- 消息行 -->
               <div
-                class="max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words"
-                :class="msg.role === 'user'
-                  ? 'bg-primary text-white rounded-br-md'
-                  : 'bg-surface border border-border text-text rounded-bl-md'
-                "
+                v-else
+                class="flex items-end gap-2.5 group"
+                :class="row.msg!.role === 'user' ? 'justify-end' : 'justify-start'"
               >
+                <!-- AI 头像（助手在左） -->
+                <div v-if="row.msg!.role === 'assistant'" class="w-8 flex-shrink-0 flex flex-col items-center gap-1">
+                  <div class="w-8 h-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
+                    <font-awesome-icon :icon="['fas', 'brain']" class="text-primary text-sm" />
+                  </div>
+                  <span class="text-[10px] leading-none text-text-tertiary opacity-0 group-hover:opacity-80 transition-opacity">{{ row.timeLabel }}</span>
+                </div>
+
+                <div
+                  class="max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words"
+                  :class="row.msg!.role === 'user'
+                    ? 'bg-primary text-white rounded-br-md'
+                    : 'bg-surface border border-border text-text rounded-bl-md'
+                  "
+                >
                 <!-- 推理过程（已完成/已中止的助手消息） -->
                 <div
-                  v-if="msg.role === 'assistant' && msg.reasoning_content"
+                  v-if="row.msg!.role === 'assistant' && row.msg!.reasoning_content"
                   class="mb-3"
                 >
                   <details class="group">
@@ -218,27 +299,27 @@
                       <font-awesome-icon :icon="['fas', 'chevron-down']" class="ml-1 text-[10px] transition-transform group-open:rotate-180" />
                     </summary>
                     <div class="mt-2 p-3 bg-[#f8f6f0] border border-[#e8e0d0] rounded-lg text-xs leading-relaxed text-[#6b5d4b] whitespace-pre-wrap">
-                      {{ msg.reasoning_content }}
+                      {{ row.msg!.reasoning_content }}
                     </div>
                   </details>
                 </div>
 
-                <MarkdownRenderer v-if="msg.content" :content="msg.content" />
+                <MarkdownRenderer v-if="row.msg!.content" :content="row.msg!.content" />
                 <!-- 生成中的动画 -->
                 <span
-                  v-if="msg.status === 'generating'"
+                  v-if="row.msg!.status === 'generating'"
                   class="inline-block w-1.5 h-4 ml-0.5 bg-current rounded-sm animate-pulse"
                 />
                 <!-- 失败状态 -->
                 <p
-                  v-if="msg.status === 'failed' && msg.error_message"
+                  v-if="row.msg!.status === 'failed' && row.msg!.error_message"
                   class="mt-1 text-xs text-error"
                 >
-                  {{ msg.error_message }}
+                  {{ row.msg!.error_message }}
                 </p>
                 <!-- 已中止 -->
                 <p
-                  v-if="msg.status === 'aborted'"
+                  v-if="row.msg!.status === 'aborted'"
                   class="mt-1 text-xs text-text-tertiary"
                 >
                   已中止
@@ -246,7 +327,7 @@
 
                 <!-- 记忆引用（仅助手已完成消息） -->
                 <div
-                  v-if="msg.role === 'assistant' && msg.status === 'completed' && msg.memory_references && msg.memory_references.length > 0"
+                  v-if="row.msg!.role === 'assistant' && row.msg!.status === 'completed' && row.msg!.memory_references && row.msg!.memory_references.length > 0"
                   class="mt-3 pt-2 border-t border-border/50"
                 >
                   <p class="text-xs text-text-tertiary mb-1.5 flex items-center gap-1">
@@ -255,9 +336,11 @@
                   </p>
                   <div class="space-y-1">
                     <div
-                      v-for="ref in msg.memory_references"
+                      v-for="ref in row.msg!.memory_references"
                       :key="ref.id"
-                      class="flex items-start gap-1.5"
+                      class="flex items-start gap-1.5 px-1 -mx-1 rounded cursor-pointer transition-colors hover:bg-hover"
+                      :title="ref.memory_id ? '查看该记忆' : undefined"
+                      @click="openMemoryRef(ref)"
                     >
                       <font-awesome-icon
                         :icon="['fas', 'quote-left']"
@@ -272,28 +355,56 @@
                     </div>
                   </div>
                 </div>
+
+                <!-- 操作按钮组（hover 显现；重新生成对已完成/中止/失败消息可用） -->
                 <div
-                  v-if="msg.role === 'assistant' && msg.status === 'completed' && msg.content"
-                  class="mt-3 pt-2 border-t border-border/50 flex flex-wrap gap-2"
+                  v-if="row.msg!.role === 'assistant' && row.msg!.status !== 'generating' && (row.msg!.status !== 'completed' || !!row.msg!.content)"
+                  class="mt-3 pt-2 border-t border-border/50 flex items-center gap-0.5"
                 >
-                  <button class="text-xs text-text-tertiary hover:text-primary" @click="saveAiContent(msg)">
-                    <font-awesome-icon :icon="['fas', 'bookmark']" class="mr-1" />收藏
-                  </button>
-                  <button class="text-xs text-text-tertiary hover:text-primary" @click="rememberAiContent(msg)">
-                    <font-awesome-icon :icon="['fas', 'brain']" class="mr-1" />记住方案
-                  </button>
-                  <button class="text-xs text-text-tertiary hover:text-primary" @click="createTaskFromAiContent(msg)">
-                    <font-awesome-icon :icon="['fas', 'list-check']" class="mr-1" />创建任务建议
+                  <template v-if="row.msg!.status === 'completed' && row.msg!.content">
+                    <button class="p-1.5 rounded-md text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors" title="复制回复" @click="copyMessageContent(row.msg!)">
+                      <font-awesome-icon :icon="['fas', 'copy']" class="text-xs" />
+                    </button>
+                    <button class="p-1.5 rounded-md text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors" title="收藏回复" @click="saveAiContent(row.msg!)">
+                      <font-awesome-icon :icon="['fas', 'bookmark']" class="text-xs" />
+                    </button>
+                    <button class="p-1.5 rounded-md text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors" title="采纳为候选记忆" @click="rememberAiContent(row.msg!)">
+                      <font-awesome-icon :icon="['fas', 'brain']" class="text-xs" />
+                    </button>
+                    <button class="p-1.5 rounded-md text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors" title="创建任务建议" @click="createTaskFromAiContent(row.msg!)">
+                      <font-awesome-icon :icon="['fas', 'list-check']" class="text-xs" />
+                    </button>
+                  </template>
+                  <button
+                    class="ml-auto p-1.5 rounded-md text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="重新生成回复"
+                    :disabled="isGenerating"
+                    @click="handleRegenerate(row.msg!)"
+                  >
+                    <font-awesome-icon :icon="['fas', 'rotate-right']" class="text-xs" />
                   </button>
                 </div>
               </div>
+
+              <!-- 用户头像（右侧） -->
+              <div v-if="row.msg!.role === 'user'" class="w-8 flex-shrink-0 flex flex-col items-center gap-1">
+                <div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center">
+                  <font-awesome-icon :icon="['fas', 'user']" class="text-white text-sm" />
+                </div>
+                <span class="text-[10px] leading-none text-text-tertiary opacity-0 group-hover:opacity-80 transition-opacity">{{ row.timeLabel }}</span>
+              </div>
             </div>
+            </template>
 
             <!-- 流式传输中的助手消息。发送后立即显示，避免首个 token 到达前没有反馈。 -->
             <div
               v-if="isGenerating"
-              class="flex justify-start"
+              key="streaming"
+              class="flex justify-start items-end gap-2.5"
             >
+              <div class="w-8 h-8 flex-shrink-0 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
+                <font-awesome-icon :icon="['fas', 'brain']" class="text-primary text-sm animate-pulse" />
+              </div>
               <div
                 class="max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap break-words bg-surface border border-border text-text rounded-bl-md"
               >
@@ -315,17 +426,17 @@
                 </div>
 
                 <template v-if="streamingContent !== ''">
-                  {{ streamingContent }}
+                  <MarkdownRenderer :content="renderedStreaming || streamingContent" />
                   <span class="inline-block w-1.5 h-4 ml-0.5 bg-current rounded-sm animate-pulse" />
                 </template>
-                <!-- 模型尚未返回推理或正文时的首响应等待反馈 -->
+                <!-- 首响应前的上下文检索反馈 -->
                 <div
                   v-else-if="streamingReasoning === ''"
                   class="flex items-center gap-2 text-text-secondary"
                   aria-live="polite"
                 >
-                  <font-awesome-icon :icon="['fas', 'brain']" class="text-primary animate-pulse" />
-                  <span>正在思考</span>
+                  <font-awesome-icon :icon="['fas', 'magnifying-glass']" class="text-primary animate-pulse" />
+                  <span>正在检索记忆与人物侧写…</span>
                   <span class="flex gap-1" aria-hidden="true">
                     <i class="w-1.5 h-1.5 rounded-full bg-current animate-bounce" />
                     <i class="w-1.5 h-1.5 rounded-full bg-current animate-bounce [animation-delay:150ms]" />
@@ -334,7 +445,24 @@
                 </div>
               </div>
             </div>
+            </TransitionGroup>
           </LoadingState>
+
+          <!-- 回到底部按钮 -->
+          <button
+            v-if="!atBottom"
+            class="absolute bottom-4 right-4 w-9 h-9 flex items-center justify-center rounded-full bg-primary text-white shadow-lg hover:bg-primary-dark hover:shadow-xl transition-all"
+            title="回到底部"
+            @click="jumpToBottom"
+          >
+            <font-awesome-icon :icon="['fas', 'arrow-down']" class="text-sm" />
+            <span
+              v-if="unreadCount > 0"
+              class="absolute -top-1 -right-1 min-w-4 h-4 px-1 flex items-center justify-center rounded-full bg-error text-white text-[10px] font-medium"
+            >
+              {{ unreadCount > 99 ? '99+' : unreadCount }}
+            </span>
+          </button>
         </div>
 
         <!-- 输入区 -->
@@ -372,6 +500,7 @@
               </button>
             </div>
             <p v-if="errorMessage" class="mt-2 text-xs text-error">{{ errorMessage }}</p>
+            <p class="mt-1.5 text-[11px] text-text-tertiary/70">Enter 发送 · Shift+Enter 换行</p>
           </div>
         </div>
       </template>
@@ -391,8 +520,9 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, computed, nextTick } from 'vue'
-import type { Message, Session, ChatStreamEvent } from '@/types/api'
+import { onMounted, onUnmounted, ref, computed, nextTick, watch } from 'vue'
+import { useRouter } from 'vue-router'
+import type { MemoryReference, Message, Session, ChatStreamEvent } from '@/types/api'
 import * as chatApi from '@/api/chat'
 import * as modelApi from '@/api/model'
 import * as artifactApi from '@/api/artifact'
@@ -434,6 +564,80 @@ let extractBatchStats = { sessions: 0, memories: 0, created: 0, errors: [] as st
 const messagesContainer = ref<HTMLElement | null>(null)
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 
+// 会话搜索与分组
+const sessionSearch = ref('')
+// 消息区滚动：用户上滑阅读时暂停自动滚动，显示回到底部按钮
+const atBottom = ref(true)
+const unreadCount = ref(0)
+const router = useRouter()
+
+// 流式 markdown：节流渲染，避免每个 token 都重解析
+const renderedStreaming = ref('')
+let streamRenderTimer: number | null = null
+watch(streamingContent, (value) => {
+  if (streamRenderTimer !== null) return
+  streamRenderTimer = window.setTimeout(() => {
+    streamRenderTimer = null
+    renderedStreaming.value = streamingContent.value
+  }, 80)
+})
+
+// 重新生成：标记正在替换的助手消息 ID，流结束后刷新消息列表
+const regeneratingId = ref<number | null>(null)
+
+/** 消息行展开：插入日期分隔线（今天/昨天/更早） */
+interface MessageRow {
+  key: string
+  type: 'divider' | 'message'
+  label?: string
+  msg?: Message
+  timeLabel: string
+}
+
+const messageRows = computed<MessageRow[]>(() => {
+  const rows: MessageRow[] = []
+  let lastDateKey = ''
+  for (const msg of messages.value) {
+    const d = msg.created_at ? new Date(msg.created_at) : null
+    const dateKey = d ? `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}` : ''
+    if (d && dateKey && dateKey !== lastDateKey) {
+      rows.push({
+        key: `divider-${dateKey}`,
+        type: 'divider',
+        label: dateLabel(d),
+        timeLabel: '',
+      })
+      lastDateKey = dateKey
+    }
+    rows.push({
+      key: `msg-${msg.id}`,
+      type: 'message',
+      msg,
+      timeLabel: d
+        ? `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+        : '',
+    })
+  }
+  return rows
+})
+
+function dateLabel(d: Date): string {
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const startOfDay = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  if (startOfDay === startOfToday) return '今天'
+  if (startOfDay === startOfToday - 86400000) return '昨天'
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+}
+
+/** 欢迎页示例问题 */
+const suggestedPrompts = [
+  { icon: 'compass', text: '帮我梳理最近的思考，找出最值得推进的一件事' },
+  { icon: 'chart-line', text: '总结我最近对话中提到的目标，并给出本周行动建议' },
+  { icon: 'lightbulb', text: '根据你对我的了解，推荐一个适合我的学习计划' },
+  { icon: 'clipboard-list', text: '整理我最近提到的待办和想法，生成任务清单' },
+]
+
 // ── 辅助函数 ──────────────────────────────────────────────────────────────
 
 function buildAssistantMessage(opts: {
@@ -469,6 +673,33 @@ const canChat = computed(() => {
 
 const canSend = computed(() => {
   return inputText.value.trim().length > 0 && !isGenerating.value
+})
+
+/** 搜索过滤后的会话列表 */
+const filteredSessions = computed(() => {
+  const q = sessionSearch.value.trim().toLowerCase()
+  if (!q) return sessions.value
+  return sessions.value.filter((s) => (s.title || '').toLowerCase().includes(q))
+})
+
+/** 会话按活跃时间分组：今天 / 昨天 / 近 7 天 / 更早 */
+const sessionGroups = computed(() => {
+  const groups: { key: string; label: string; items: Session[] }[] = [
+    { key: 'today', label: '今天', items: [] },
+    { key: 'yesterday', label: '昨天', items: [] },
+    { key: 'week', label: '近 7 天', items: [] },
+    { key: 'older', label: '更早', items: [] },
+  ]
+  const now = new Date()
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  const startOfYesterday = startOfToday - 24 * 3600 * 1000
+  const startOfWeek = startOfToday - 6 * 24 * 3600 * 1000
+  for (const s of filteredSessions.value) {
+    const t = new Date(s.updated_at || s.created_at || '').getTime()
+    const index = !t || t < startOfWeek ? 3 : t < startOfYesterday ? 2 : t < startOfToday ? 1 : 0
+    groups[index].items.push(s)
+  }
+  return groups.filter((g) => g.items.length > 0)
 })
 
 const extractInProgress = computed(() => {
@@ -668,16 +899,16 @@ async function handleSend() {
   )
 }
 
-function handleStreamEvent(event: ChatStreamEvent) {
+async function handleStreamEvent(event: ChatStreamEvent) {
   switch (event.type) {
     case 'token':
       streamingContent.value += event.content || ''
-      scrollToBottom()
+      scrollToBottomIfNeeded()
       break
 
     case 'reasoning_token':
       streamingReasoning.value += event.content || ''
-      scrollToBottom()
+      scrollToBottomIfNeeded()
       break
 
     case 'done':
@@ -696,6 +927,11 @@ function handleStreamEvent(event: ChatStreamEvent) {
       isGenerating.value = false
       scrollToBottom()
       focusInput()
+      // 重新生成模式：后端消息 ID 与本地不一致，全量刷新
+      if (regeneratingId.value !== null) {
+        regeneratingId.value = null
+        await fetchMessages()
+      }
       break
 
     case 'error':
@@ -718,6 +954,11 @@ function handleStreamEvent(event: ChatStreamEvent) {
       streamingReasoning.value = ''
       isGenerating.value = false
       scrollToBottom()
+      // 重新生成失败：刷新以恢复被删除的旧回复
+      if (regeneratingId.value !== null) {
+        regeneratingId.value = null
+        await fetchMessages()
+      }
       break
   }
 }
@@ -727,6 +968,11 @@ function handleStreamError(err: Error) {
   isGenerating.value = false
   streamingContent.value = ''
   streamingReasoning.value = ''
+  // 重新生成失败：刷新以恢复被删除的旧回复
+  if (regeneratingId.value !== null) {
+    regeneratingId.value = null
+    void fetchMessages()
+  }
 }
 
 function handleStop() {
@@ -748,6 +994,60 @@ function handleStop() {
   isGenerating.value = false
   errorMessage.value = null
   focusInput()
+  // 重新生成中止：后端消息 ID 与本地临时 ID 不一致，刷新
+  if (regeneratingId.value !== null) {
+    regeneratingId.value = null
+    void fetchMessages()
+  }
+}
+
+async function handleRegenerate(msg: Message) {
+  if (isGenerating.value || !currentSessionId.value || !canChat.value) return
+  // 本地移除旧回复，等待后端删除并重新生成
+  messages.value = messages.value.filter((m) => m.id !== msg.id)
+  regeneratingId.value = msg.id
+  errorMessage.value = null
+  streamingContent.value = ''
+  streamingReasoning.value = ''
+  isGenerating.value = true
+  abortController.value = new AbortController()
+  await chatApi.streamChat(
+    currentSessionId.value,
+    '', // 重新生成模式：后端复用该回复对应的用户消息
+    activeConfig.value?.id || 0,
+    handleStreamEvent,
+    handleStreamError,
+    abortController.value.signal,
+    msg.id,
+  )
+}
+
+/** 复制整条助手回复内容 */
+function copyMessageContent(msg: Message) {
+  const text = msg.content || ''
+  const fallback = () => {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    document.execCommand('copy')
+    ta.remove()
+  }
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(text).catch(fallback)
+  } else {
+    fallback()
+  }
+}
+
+/** 欢迎页示例问题：新建会话并直接发送 */
+async function handleSuggestedPrompt(text: string) {
+  if (!canChat.value) return
+  inputText.value = text
+  await handleNewSession()
+  handleSend()
 }
 
 // ── 会话提取 ──────────────────────────────────────────────────────────────
@@ -934,8 +1234,43 @@ function scrollToBottom() {
   nextTick(() => {
     if (messagesContainer.value) {
       messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+      atBottom.value = true
+      unreadCount.value = 0
     }
   })
+}
+
+/** 流式输出时按需滚动：用户不在底部则不打扰，只累计未读提示 */
+function scrollToBottomIfNeeded() {
+  if (!atBottom.value) {
+    unreadCount.value += 1
+    return
+  }
+  scrollToBottom()
+}
+
+function jumpToBottom() {
+  scrollToBottom()
+}
+
+function onMessagesScroll() {
+  const el = messagesContainer.value
+  if (!el) return
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+  if (nearBottom) {
+    if (!atBottom.value) {
+      atBottom.value = true
+      unreadCount.value = 0
+    }
+  } else {
+    atBottom.value = false
+  }
+}
+
+/** 点击记忆引用跳转到长期记忆页并定位高亮 */
+function openMemoryRef(ref: MemoryReference) {
+  if (!ref.memory_id) return
+  router.push({ path: '/memories', query: { highlight: String(ref.memory_id) } })
 }
 
 function focusInput() {
@@ -982,5 +1317,14 @@ onUnmounted(() => {
 /* 消息区平滑滚动 */
 .messages-container {
   scroll-behavior: smooth;
+}
+
+/* 消息入场动画（只做进入，切换会话时避免旧列表淡出闪烁） */
+.msg-enter-active {
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.msg-enter-from {
+  opacity: 0;
+  transform: translateY(10px);
 }
 </style>

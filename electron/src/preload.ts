@@ -88,7 +88,7 @@ const api = {
    * @returns 清理函数，用于取消监听和停止流
    */
   streamChat: (
-    data: { sessionId: number; content: string; configId: number },
+    data: { sessionId: number; content: string; configId: number; regenerateMessageId?: number },
     callbacks: {
       onToken: (content: string) => void;
       onReasoning: (content: string) => void;

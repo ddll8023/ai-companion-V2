@@ -165,6 +165,7 @@ def chat_stream(
         session_id=session_id,
         user_content=body.content,
         api_key=body.api_key,
+        regenerate_message_id=body.regenerate_message_id,
     )
     if init_result.get("error"):
         return JSONResponse(

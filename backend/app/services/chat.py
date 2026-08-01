@@ -218,6 +218,7 @@ def initialize_chat_stream(
     session_id: int,
     user_content: str,
     api_key: str | None,
+    regenerate_message_id: int | None = None,
 ) -> dict[str, Any]:
     """流式对话初始化（在注入的 db session 中快速执行，不 hold session）。
 
@@ -226,8 +227,10 @@ def initialize_chat_stream(
     Args:
         db: 数据库会话（由 Depends 注入，本函数返回后释放）
         session_id: 会话 ID
-        user_content: 用户消息内容
+        user_content: 用户消息内容（重新生成模式下可传空，将复用目标消息对应的用户消息）
         api_key: API Key
+        regenerate_message_id: 重新生成模式：指定要替换的助手消息 ID。
+            删除该消息并从其上一条用户消息重新生成，不新增用户消息。
 
     Returns:
         成功时返回包含生成所需全部信息的 dict；错误时返回 {"error": "..."}
@@ -248,8 +251,31 @@ def initialize_chat_stream(
     if existing_generating is not None:
         return {"error": "当前会话已有正在生成的回复，请等待完成或中止后重试"}
 
-    # 保存用户消息
-    user_msg = _save_user_message(db, session_id, user_content)
+    # 重新生成模式：校验目标消息并删除，复用其对应的用户消息
+    if regenerate_message_id is not None:
+        target_msg = db.get(Message, regenerate_message_id)
+        if (
+            target_msg is None
+            or target_msg.session_id != session_id
+            or target_msg.role != "assistant"
+        ):
+            return {"error": "目标回复不存在"}
+        user_msg = db.scalar(
+            select(Message).where(
+                Message.session_id == session_id,
+                Message.role == "user",
+                Message.id < target_msg.id,
+            ).order_by(Message.id.desc()).limit(1)
+        )
+        if user_msg is None:
+            return {"error": "未找到对应的用户消息，无法重新生成"}
+        # 删除旧回复（memory_references 级联删除，conversation_turns 置空）
+        db.delete(target_msg)
+        db.flush()
+        user_content = user_msg.content
+    else:
+        # 保存用户消息
+        user_msg = _save_user_message(db, session_id, user_content)
 
     # 获取激活的模型配置
     try:

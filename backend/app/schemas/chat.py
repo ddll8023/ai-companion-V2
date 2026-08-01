@@ -79,6 +79,10 @@ class ChatRequest(BaseModel):
 
     content: str = Field(..., min_length=1, max_length=32000, description="消息内容")
     api_key: str | None = Field(None, description="API Key（浏览器模式需要传入）")
+    regenerate_message_id: int | None = Field(
+        None,
+        description="重新生成模式：指定要替换的助手消息 ID（从其上一条用户消息重新生成）",
+    )
 
 
 class ChatEvent(BaseModel):

@@ -622,6 +622,7 @@ function setupIpcHandlers(): void {
     sessionId: number;
     content: string;
     configId: number;
+    regenerateMessageId?: number;
   }) => {
     if (!backendPort || !isBackendReady) {
       event.sender.send(IPC_CHANNELS.CHAT_STREAM_EVENT, {
@@ -642,7 +643,7 @@ function setupIpcHandlers(): void {
    */
   async function handleStreamChat(
     event: Electron.IpcMainEvent,
-    data: { sessionId: number; content: string; configId: number },
+    data: { sessionId: number; content: string; configId: number; regenerateMessageId?: number },
   ) {
     const store = loadSecureStore();
     const apiKey = store[`model_key_${data.configId}`];
@@ -656,6 +657,7 @@ function setupIpcHandlers(): void {
     const body = JSON.stringify({
       content: data.content,
       api_key: apiKey,
+      regenerate_message_id: data.regenerateMessageId ?? undefined,
     });
 
     const req = http.request(

@@ -57,7 +57,11 @@
           <div
             v-for="memory in memories"
             :key="memory.id"
-            class="p-5 bg-surface border border-border rounded-lg"
+            :data-memory-id="memory.id"
+            class="p-5 bg-surface border rounded-lg transition-colors duration-500"
+            :class="highlightedId === memory.id
+              ? 'border-primary ring-2 ring-primary/30 bg-primary-light/30'
+              : 'border-border'"
           >
             <!-- 记忆头部 -->
             <div class="flex items-start justify-between mb-3">
@@ -354,7 +358,8 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { nextTick, onMounted, ref, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import type { Memory, MemoryDetail } from '@/types/api'
 import * as memoryApi from '@/api/memory'
 import LoadingState from '@/components/custom/LoadingState.vue'
@@ -414,6 +419,10 @@ const pageSize = 20
 const hasMore = computed(() => {
   return memories.value.length < total.value
 })
+
+// ── 定位高亮（从对话页记忆引用跳转而来） ──
+const route = useRoute()
+const highlightedId = ref<number | null>(null)
 
 // ── 操作状态 ──
 const actionLoading = ref<number | null>(null)
@@ -628,7 +637,28 @@ function typeLabel(type: string): string {
 
 // ── 生命周期 ──
 onMounted(async () => {
+  const highlight = route.query.highlight
+  const highlightNum = Array.isArray(highlight) ? Number(highlight[0]) : Number(highlight)
+  if (Number.isFinite(highlightNum) && highlightNum > 0) {
+    highlightedId.value = highlightNum
+    // 重置筛选，确保目标记忆进入第一页
+    selectedStatus.value = undefined
+    searchQuery.value = ''
+  }
   await fetchMemories()
+  if (highlightedId.value) {
+    await nextTick()
+    const el = document.querySelector(`[data-memory-id="${highlightedId.value}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      window.setTimeout(() => {
+        highlightedId.value = null
+      }, 3000)
+    } else {
+      // 目标记忆不在第一页（可能在其他分页或已被删除），静默
+      highlightedId.value = null
+    }
+  }
 })
 </script>
 
