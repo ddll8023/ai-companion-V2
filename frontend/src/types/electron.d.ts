@@ -40,7 +40,6 @@ export interface ElectronAPI {
   /**
    * 流式对话（密钥由主进程从 keystore 注入，Renderer 不接触密钥）。
    * 通过回调逐 token 推送，不再一次性返回。
-   * @returns 清理函数，用于取消监听和停止流
    */
   streamChat: (
     data: ChatStreamRequest,
@@ -50,7 +49,7 @@ export interface ElectronAPI {
       onDone: (messageId: number | null) => void;
       onError: (message: string) => void;
     },
-  ) => () => void
+  ) => void
 
   /** 触发会话级记忆与人物理解提取（密钥由主进程从 keystore 注入） */
   extractSession: (

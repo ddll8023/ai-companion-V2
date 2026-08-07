@@ -88,7 +88,6 @@ export async function getMessages(sessionId: number) {
  *
  * @param configId 模型配置 ID（Electron 模式：主进程据此从 keystore 获取密钥）
  * @param regenerateMessageId 重新生成模式：替换指定助手消息（从其上一条用户消息重新生成）
- * @param signal 可选 AbortSignal，用于主动中止请求
  */
 export async function streamChat(
   sessionId: number,
@@ -96,13 +95,12 @@ export async function streamChat(
   configId: number,
   onEvent: (event: ChatStreamEvent) => void,
   onError: (error: Error) => void,
-  signal?: AbortSignal,
   regenerateMessageId?: number,
 ): Promise<void> {
   // ── Electron 模式：通过 IPC 逐 token 推送 ──
   if (typeof window !== 'undefined' && window.electronAPI) {
     try {
-      const cleanup = window.electronAPI.streamChat(
+      window.electronAPI.streamChat(
         { sessionId, content, configId, regenerateMessageId },
         {
           onToken: (token: string) => {
@@ -120,11 +118,6 @@ export async function streamChat(
           },
         },
       )
-
-      // 注册中止清理
-      if (signal) {
-        signal.addEventListener('abort', () => { cleanup() })
-      }
       return
     } catch (e) {
       onError(e instanceof Error ? e : new Error(String(e)))
@@ -153,7 +146,6 @@ export async function streamChat(
         api_key: apiKey || undefined,
         regenerate_message_id: regenerateMessageId ?? undefined,
       }),
-      signal,
     })
 
     if (!response.ok) {
@@ -202,10 +194,6 @@ export async function streamChat(
       }
     }
   } catch (e) {
-    // 用户主动中止（AbortController）不触发错误回调
-    if (e instanceof DOMException && e.name === 'AbortError') {
-      return
-    }
     onError(e instanceof Error ? e : new Error(String(e)))
   }
 }

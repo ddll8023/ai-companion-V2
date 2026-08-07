@@ -5,12 +5,11 @@
  * 将 macOSActivity.ts 中的独立函数封装为统一的平台采集接口。
  */
 
-import { ActivityPlatformAdapter, FrontmostAppInfo, IdleTimeInfo } from '../services/activityPlatform';
+import { ActivityPlatformAdapter, FrontmostAppInfo } from '../services/activityPlatform';
 import { PermissionState, PermissionStatusType } from '../constants/platform';
 import {
   getFrontmostAppInfo as macOSGetFrontmostAppInfo,
   getFrontmostAppName as macOSGetFrontmostAppName,
-  getIdleTime as macOSGetIdleTime,
   checkAccessibilityPermission as macOSCheckAccessibility,
   getAllMacOSCapabilities,
 } from './macOSActivity';
@@ -22,10 +21,6 @@ export class MacOSCollector implements ActivityPlatformAdapter {
 
   async getFrontmostAppName(): Promise<string | null> {
     return macOSGetFrontmostAppName();
-  }
-
-  async getIdleTime(): Promise<IdleTimeInfo> {
-    return macOSGetIdleTime();
   }
 
   async checkAccessibilityPermission(): Promise<PermissionStatusType> {

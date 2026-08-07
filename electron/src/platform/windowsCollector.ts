@@ -9,7 +9,7 @@
  *       不要在本模块中动态引入 macOSCollector，避免交叉依赖。
  */
 
-import { ActivityPlatformAdapter, FrontmostAppInfo, IdleTimeInfo } from '../services/activityPlatform';
+import { ActivityPlatformAdapter, FrontmostAppInfo } from '../services/activityPlatform';
 import { PermissionState, PermissionStatusType, PermissionStatus, PermissionNames } from '../constants/platform';
 
 export class WindowsCollector implements ActivityPlatformAdapter {
@@ -24,10 +24,6 @@ export class WindowsCollector implements ActivityPlatformAdapter {
 
   async getFrontmostAppName(): Promise<string | null> {
     return null;
-  }
-
-  async getIdleTime(): Promise<IdleTimeInfo> {
-    return { idleSeconds: 0, success: false, error: 'Windows 活动采集尚未实现' };
   }
 
   async checkAccessibilityPermission(): Promise<PermissionStatusType> {

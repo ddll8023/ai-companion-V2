@@ -8,10 +8,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
-from app.schemas.common import ApiResponse, ErrorCode, PaginatedResponse
+from app.schemas.common import ApiResponse, PaginatedResponse
 from app.schemas.memory import (
     MemoryCorrect,
-    MemoryCreate,
     MemoryDetailResponse,
     MemoryListQuery,
     MemoryResponse,
@@ -24,19 +23,6 @@ router = APIRouter(prefix="/api/v1/memories", tags=["记忆"])
 
 
 # ── 记忆 CRUD ──────────────────────────────────────────────────────────────
-
-
-@router.post("", response_model=ApiResponse[MemoryResponse])
-def create_memory(
-    body: MemoryCreate,
-    db: Annotated[Session, Depends(get_db)],
-):
-    """创建候选记忆（手动创建）。"""
-    try:
-        result = services_memory.create_candidate_memory(db, body)
-        return success(data=result)
-    except ServiceException as e:
-        return error(code=e.code, message=e.message)
 
 
 @router.post("/list", response_model=ApiResponse[PaginatedResponse[MemoryResponse]])

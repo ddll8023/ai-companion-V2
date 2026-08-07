@@ -409,9 +409,9 @@ function saveSecureStore(store: Record<string, string>): void {
  * - DELETE（删除）：只允许明确的资源 ID 级删除
  *
  * 注意：
- * - 管理员级操作（backup/restore/clear）虽在前端有 UI 且后端已验证 confirm_key，
+ * - 管理员级操作（backup/clear）虽在前端有 UI 且后端已验证 confirm_key，
  *   但仍在此白名单中放行，因为 IPC 代理不应替代后端的业务校验 ——
- *   后端 /v1/data/restore 和 /v1/data/clear 自有 confirm_key 验证。
+ *   后端 /v1/data/clear 自有 confirm_key 验证。
  * - 新增路由时需要在此白名单中添加对应前缀，否则 IPC 模式会返回 403。
  * - 前缀匹配使用路径段精确比较（非子串），自动处理 URL 编码。
  */
@@ -439,15 +439,10 @@ const API_ACCESS_RULES = {
       '/api/v1/data/clear-all',
       '/api/v1/data/export',
       '/api/v1/data/exports/',
-      '/api/v1/data/restore',
-      '/api/v1/data/retention',
-      '/api/v1/data/retention/',
-      '/api/v1/goals/',
       '/api/v1/memories/',
       '/api/v1/models/configs',
       '/api/v1/models/configs/',  // 匹配子路径如 /api/v1/models/configs/{id}
       '/api/v1/persona/',
-      '/api/v1/statistics/',
       '/api/v1/tasks/',
     ],
   },
@@ -458,7 +453,6 @@ const API_ACCESS_RULES = {
       '/api/v1/chat/sessions/',
       '/api/v1/data/exports/',
       '/api/v1/data/backups/',
-      '/api/v1/data/retention/',
       '/api/v1/memories/',
       '/api/v1/models/configs/',
       '/api/v1/persona/',

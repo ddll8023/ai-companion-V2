@@ -112,8 +112,8 @@
       </button>
     </div>
 
-    <!-- 待办事项卡片 -->
-    <div v-if="!showWelcome && hasPendingTasks" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+    <!-- 快捷信息卡片 -->
+    <div v-if="!showWelcome" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
       <!-- 待确认记忆 -->
       <router-link
         v-if="pendingMemories > 0"
@@ -125,20 +125,6 @@
           <span>待确认记忆</span>
         </div>
         <p class="text-2xl font-bold text-primary">{{ pendingMemories }}</p>
-        <p class="text-xs text-text-tertiary mt-1">点击查看</p>
-      </router-link>
-
-      <!-- 待完成任务 -->
-      <router-link
-        v-if="pendingTasks > 0"
-        to="/goals"
-        class="p-4 bg-surface rounded-lg border border-border hover:border-primary/30 hover:shadow-sm transition-all"
-      >
-        <div class="flex items-center gap-2 text-sm text-text-secondary mb-2">
-          <font-awesome-icon :icon="['fas', 'tasks']" class="text-warning" />
-          <span>待办事宜</span>
-        </div>
-        <p class="text-2xl font-bold text-warning">{{ pendingTasks }}</p>
         <p class="text-xs text-text-tertiary mt-1">点击查看</p>
       </router-link>
 
@@ -229,7 +215,6 @@ import { useAppStore } from '@/stores/app'
 import * as modelApi from '@/api/model'
 import * as memoryApi from '@/api/memory'
 import * as activityApi from '@/api/activity'
-import * as goalApi from '@/api/goal'
 import * as chatApi from '@/api/chat'
 import ErrorState from '@/components/custom/ErrorState.vue'
 
@@ -249,9 +234,7 @@ const modelConfigured = ref(false)
 // 仅在成功取得模型状态后显示“未配置”提示，避免应用启动时后端尚未就绪造成误报。
 const modelConfigurationLoaded = ref(false)
 const pendingMemories = ref(0)
-const pendingTasks = ref(0)
 const todayActivities = ref(0)
-const hasPendingTasks = ref(false)
 
 // 首次启动引导是否已关闭（localStorage 持久化）
 const showWelcome = ref(false)
@@ -271,12 +254,10 @@ async function initDashboard() {
   error.value = null
   try {
     // 并行查询关键状态
-    const [activeConfigRes, sessionsRes, memoriesRes, tasksRes, activitiesRes] = await Promise.allSettled([
+    const [activeConfigRes, sessionsRes, memoriesRes, activitiesRes] = await Promise.allSettled([
       modelApi.getActiveConfig(),
       chatApi.listSessions(),
       memoryApi.listMemories({ status: 'candidate', page: 1, page_size: 1 }),
-      // 待完成任务（状态 0=待处理）
-      goalApi.listTasks({ status: 0, page: 1, page_size: 1 }),
       activityApi.listActivities({ page: 1, page_size: 1 }),
     ])
     await appStore.fetchHealth()
@@ -301,17 +282,10 @@ async function initDashboard() {
       pendingMemories.value = memoriesRes.value.data?.pagination?.total || 0
     }
 
-    // 待完成任务
-    if (tasksRes.status === 'fulfilled') {
-      pendingTasks.value = tasksRes.value.data?.pagination?.total || 0
-    }
-
     // 今日活动
     if (activitiesRes.status === 'fulfilled') {
       todayActivities.value = activitiesRes.value.data?.pagination?.total || 0
     }
-
-    hasPendingTasks.value = pendingMemories.value > 0 || pendingTasks.value > 0
 
     // 判断是否显示首次启动引导
     // 面板在所有步骤完成或用户手动关闭后才消失

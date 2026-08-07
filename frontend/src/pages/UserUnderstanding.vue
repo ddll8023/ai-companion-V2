@@ -52,9 +52,6 @@
           <font-awesome-icon :icon="['fas', 'id-card']" class="mr-1.5 text-primary" />
           人物侧写
         </h3>
-        <span v-if="document?.is_pending_review" class="text-xs px-2 py-0.5 rounded-full bg-error/10 text-error">
-          待审查
-        </span>
         <span v-if="document" class="text-xs px-2 py-0.5 rounded-full bg-hover text-text-secondary">
           引用 {{ document.cited_insight_ids.length }} 条洞见
         </span>

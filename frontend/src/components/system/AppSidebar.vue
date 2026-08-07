@@ -101,7 +101,6 @@ const navItems: NavItem[] = [
   { path: '/', label: '概览', icon: 'house' },
   { path: '/chat', label: '对话', icon: 'comments' },
   { path: '/memories', label: '记忆', icon: 'brain' },
-  { path: '/goals', label: '目标', icon: 'bullseye' },
   { path: '/understanding', label: '用户理解', icon: 'user' },
   { path: '/activities', label: '活动', icon: 'clock' },
   { path: '/settings', label: '设置', icon: 'gear' },

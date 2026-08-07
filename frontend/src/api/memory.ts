@@ -1,12 +1,7 @@
 import { getAdapter } from '@/composables/useApi'
-import type { Memory, MemoryCorrect, MemoryCreate, MemoryDetail, MemoryListQuery } from '@/types/api'
+import type { Memory, MemoryCorrect, MemoryDetail, MemoryListQuery } from '@/types/api'
 
 const adapter = getAdapter()
-
-/** 创建候选记忆 */
-export async function createMemory(data: MemoryCreate) {
-  return adapter.post<Memory>('/api/v1/memories', data)
-}
 
 /** 查询记忆列表（支持筛选） */
 export async function listMemories(query: MemoryListQuery) {

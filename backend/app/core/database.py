@@ -99,7 +99,7 @@ def paginate_query(
         page_size: 每页条数
         response_class: Pydantic 响应类，用于 model_validate 转换
         transform: 自定义转换函数（与 response_class 二选一）
-        ordering: 排序子句（如 Goal.created_at.desc()），会追加到 stmt
+        ordering: 排序子句（如 Model.created_at.desc()），会追加到 stmt
 
     Returns:
         分页后的 PaginatedResponse 实例

@@ -46,7 +46,6 @@ def get_database_status(db: Session) -> dict[str, Any]:
         from app.models.audit import AuditLog
         from app.models.chat import ChatSession, Message
         from app.models.data_governance import BackupRecord, DataExport
-        from app.models.goal import Goal, Task
         from app.models.memory import Memory
         from app.models.persona import Insight, Observation, PersonaDocument
         from app.models.task import BackgroundTask
@@ -77,8 +76,6 @@ def get_database_status(db: Session) -> dict[str, Any]:
                 "messages": db.query(Message).count(),
                 "memories": db.query(Memory).count(),
                 "activities": db.query(Activity).count(),
-                "goals": db.query(Goal).count(),
-                "tasks": db.query(Task).count(),
                 "insights": db.query(Insight).count(),
                 "observations": db.query(Observation).count(),
                 "persona_documents": db.query(PersonaDocument).count(),
@@ -235,9 +232,6 @@ def get_activity_collection_status(db: Session) -> dict[str, Any]:
         from app.models.activity import Activity, PrivacyRule
 
         total_rules = db.query(PrivacyRule).count()
-        active_rules = db.query(PrivacyRule).filter(
-            PrivacyRule.is_active == True  # noqa: E712
-        ).count()
         # 使用 Python UTC 时间，避免 func.now() 时区偏移风险
         today_str = datetime.now(timezone.utc).date().isoformat()
         today_count = db.query(Activity).filter(
@@ -248,7 +242,6 @@ def get_activity_collection_status(db: Session) -> dict[str, Any]:
         return {
             "status": "ok",
             "privacy_rules_total": total_rules,
-            "privacy_rules_active": active_rules,
             "activities_today": today_count,
             "activities_total": total_activities,
         }
@@ -258,7 +251,6 @@ def get_activity_collection_status(db: Session) -> dict[str, Any]:
             "status": "error",
             "error_message": str(exc)[:200],
             "privacy_rules_total": 0,
-            "privacy_rules_active": 0,
             "activities_today": 0,
             "activities_total": 0,
         }

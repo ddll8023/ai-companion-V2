@@ -5,9 +5,7 @@ from app.models.chat import Message
 from app.models.conversation import AiArtifact
 from app.models.memory import MemorySource
 from app.schemas.artifact import AiArtifactCreate, AiArtifactResponse
-from app.schemas.goal import TaskSuggestionCreate
 from app.schemas.memory import MemoryCreate
-from app.services import goal as goal_service
 from app.services import memory as memory_service
 from app.services.audit import record_audit
 from app.utils.exception import ServiceException
@@ -42,17 +40,6 @@ def adopt_as_memory(db: Session, artifact_id: int):
     commit_or_rollback(db)
     record_audit(db, "ai_artifact.remember", "ai_artifact", artifact.id, summary="用户采纳 AI 内容为候选记忆")
     return memory
-
-def create_task_suggestion(db: Session, artifact_id: int):
-    artifact = _get(db, artifact_id)
-    artifact.status = "adopted"
-    result = goal_service.create_suggestion(db, TaskSuggestionCreate(
-        title=artifact.title, description=artifact.content, priority=1,
-        suggestion_data=f"用户从 AI 内容 #{artifact.id} 创建的任务建议",
-    ))
-    commit_or_rollback(db)
-    record_audit(db, "ai_artifact.task_suggestion", "ai_artifact", artifact.id, summary="从 AI 内容创建任务建议")
-    return result
 
 def _get(db: Session, artifact_id: int) -> AiArtifact:
     artifact = db.get(AiArtifact, artifact_id)

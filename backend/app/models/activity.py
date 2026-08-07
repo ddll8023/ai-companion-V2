@@ -6,9 +6,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-
-from sqlalchemy import Boolean, Column, DateTime, Index, Integer, String, Text, func
+from sqlalchemy import Column, DateTime, Index, Integer, String, Text, func
 
 from app.core.base_model import BaseModel
 from app.core.database import Base
@@ -26,13 +24,6 @@ class Activity(Base):
     app_name = Column(String(256), nullable=False, index=True, comment="应用名称")
     window_title = Column(String(512), nullable=True, comment="窗口标题")
     started_at = Column(DateTime, nullable=False, comment="活动开始时间")
-    ended_at = Column(DateTime, nullable=True, comment="活动结束时间")
-    duration_seconds = Column(
-        Integer, nullable=True, comment="活动持续时长（秒）",
-    )
-    is_idle = Column(
-        Boolean, nullable=False, default=False, comment="用户是否空闲",
-    )
     platform = Column(
         String(16), nullable=False, comment="采集来源平台: macos/windows",
     )
@@ -62,7 +53,7 @@ class Activity(Base):
         )
 
 
-# 行为统计查询的覆盖索引
+# 活动查询的覆盖索引
 Index("ix_activities_created_at_app_name", Activity.created_at, Activity.app_name)
 Index("ix_activities_platform_started", Activity.platform, Activity.started_at)
 
@@ -87,15 +78,9 @@ class PrivacyRule(BaseModel):
         Text, nullable=False, comment="规则值（JSON 字符串或其他格式）",
     )
     description = Column(String(256), nullable=True, comment="规则描述")
-    is_active = Column(
-        Boolean, nullable=False, default=True, comment="是否启用",
-    )
     priority = Column(
         Integer, nullable=False, default=0, comment="优先级（数值越高优先）",
     )
 
     def __repr__(self):
-        return (
-            f"<PrivacyRule(id={self.id}, type='{self.rule_type}', "
-            f"active={self.is_active})>"
-        )
+        return f"<PrivacyRule(id={self.id}, type='{self.rule_type}')>"

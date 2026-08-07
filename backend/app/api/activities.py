@@ -21,7 +21,7 @@ from app.schemas.activity import (
     PrivacyRuleResponse,
     PrivacyRuleUpdate,
 )
-from app.schemas.common import ApiResponse, ErrorCode, PaginatedResponse
+from app.schemas.common import ApiResponse, PaginatedResponse
 from app.schemas.response import error, success
 from app.services import activity as services_activity
 from app.utils.exception import ServiceException

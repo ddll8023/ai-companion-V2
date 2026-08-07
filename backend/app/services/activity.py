@@ -113,9 +113,6 @@ def _process_single_event(db: Session, event: ActivityEvent) -> None:
         app_name=event.app_name,
         window_title=event.window_title,
         started_at=event.started_at,
-        ended_at=event.ended_at,
-        duration_seconds=event.duration_seconds,
-        is_idle=1 if event.is_idle else 0,
         platform=event.platform,
         privacy_action=eval_result.action,
         masked_app_name=eval_result.masked_app_name,
@@ -129,41 +126,12 @@ def _generate_source_id(event: ActivityEvent) -> str:
     """为没有 source_id 的事件生成去重标识。"""
     raw = (
         f"{event.app_name}|{event.started_at.isoformat()}|{event.platform}"
-        f"|{event.window_title or ''}|{event.duration_seconds or ''}"
+        f"|{event.window_title or ''}"
     )
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
 # ── 隐私规则引擎 ────────────────────────────────────────────────────────────────
-
-
-def _deactivate_expired_temp_pauses(
-    db: Session,
-    rules: list[PrivacyRule],
-) -> None:
-    """检查并自动禁用已过期的 temp_pause 规则。
-
-    将 temp_pause 的过期检测从 _evaluate_single_rule 中分离出来，
-    确保过期规则的禁用状态能被持久化。
-    """
-    modified = False
-    for rule in rules:
-        if rule.rule_type != "temp_pause":
-            continue
-        try:
-            pause_config = json.loads(rule.rule_value)
-            pause_until = pause_config.get("pause_until")
-            if pause_until:
-                until_time = datetime.fromisoformat(pause_until)
-                if datetime.now() >= until_time:
-                    rule.is_active = 0
-                    modified = True
-                    logger.info(f"临时暂停规则已过期，自动禁用: rule_id={rule.id}")
-        except (json.JSONDecodeError, ValueError):
-            continue
-
-    if modified:
-        db.flush()
 
 
 def _collect_whitelist_values(
@@ -192,9 +160,8 @@ def _evaluate_privacy(
     """隐私规则引擎：按优先级评估给定事件是否允许采集。
 
     评估流程：
-    1. 先处理 temp_pause 过期自动禁用（持久化 side effect）
-    2. 白名单模式统一判断（集合性规则）
-    3. 其余规则按优先级逐条评估（首次命中即返回）
+    1. 白名单模式统一判断（集合性规则）
+    2. 其余规则按优先级逐条评估（首次命中即返回）
 
     Args:
         db: 数据库会话
@@ -203,10 +170,9 @@ def _evaluate_privacy(
     Returns:
         评估结果（是否允许、处理动作、原因等）
     """
-    # 获取所有已启用的规则，按优先级降序排列
+    # 获取全部规则，按优先级降序排列
     rules = db.scalars(
         select(PrivacyRule)
-        .where(PrivacyRule.is_active == 1)
         .order_by(PrivacyRule.priority.desc(), PrivacyRule.id)
     ).all()
 
@@ -214,10 +180,7 @@ def _evaluate_privacy(
         # 没有配置规则时默认阻断（fail closed — 无法确认安全时停止采集）
         return PrivacyEvaluateResult(allowed=False, action="blocked", reason="无隐私规则，默认阻断")
 
-    # 1. 处理 temp_pause 规则过期自动禁用
-    _deactivate_expired_temp_pauses(db, rules)
-
-    # 2. 白名单是集合性规则：先收集所有白名单条目，再统一判断
+    # 白名单是集合性规则：先收集所有白名单条目，再统一判断
     whitelist_values = _collect_whitelist_values(rules)
     if whitelist_values is not None:
         # 白名单模式启用时，只有白名单中的应用才允许被采集
@@ -506,7 +469,6 @@ def create_privacy_rule(
         rule_type=data.rule_type,
         rule_value=data.rule_value,
         description=data.description,
-        is_active=1,
         priority=data.priority,
     )
     db.add(rule)
@@ -533,9 +495,6 @@ def query_privacy_rules(
 
     if query.rule_type:
         base_stmt = base_stmt.where(PrivacyRule.rule_type == query.rule_type)
-    if query.is_active is not None:
-        base_stmt = base_stmt.where(PrivacyRule.is_active == (1 if query.is_active else 0))
-
     total = db.scalar(select(func.count()).select_from(base_stmt.subquery()))
 
     items = (
@@ -578,8 +537,6 @@ def update_privacy_rule(
         rule.rule_value = data.rule_value
     if data.description is not None:
         rule.description = data.description
-    if data.is_active is not None:
-        rule.is_active = 1 if data.is_active else 0
     if data.priority is not None:
         rule.priority = data.priority
 

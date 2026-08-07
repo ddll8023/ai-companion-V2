@@ -550,32 +550,14 @@ def compile_document(db: Session, api_key: str) -> dict:
     else:
         version = 1
 
-    # 防漂移-熔断：变更幅度 >50% 时不自动激活，待用户审核
-    is_pending = False
-    if current and current.content:
-        old_clean = re.sub(r"\s+", "", current.content)
-        new_clean = re.sub(r"\s+", "", content)
-        ratio = SequenceMatcher(None, old_clean, new_clean).ratio()
-        change_ratio = 1 - ratio
-        if change_ratio > 0.5:
-            is_pending = True
-
-    if is_pending:
-        document = PersonaDocument(
-            content=content[:20000], cited_insight_ids=cited,
-            version=version,
-            change_summary=str(parsed.get("change_summary") or f"变更幅度较大（{change_ratio:.0%}），待用户审核"),
-            edited_by="system",
-            is_active=False, is_pending_review=True,
-        )
-    else:
-        document = PersonaDocument(
-            content=content[:20000], cited_insight_ids=cited,
-            version=version,
-            change_summary=str(parsed.get("change_summary") or "洞见发生变化"),
-            edited_by="system",
-        )
+    document = PersonaDocument(
+        content=content[:20000], cited_insight_ids=cited,
+        version=version,
+        change_summary=str(parsed.get("change_summary") or "洞见发生变化"),
+        edited_by="system",
+        is_active=True,
+    )
 
     db.add(document)
     commit_or_rollback(db)
-    return {"compiled": True, "document_id": document.id, "version": version, "pending_review": is_pending}
+    return {"compiled": True, "document_id": document.id, "version": version}

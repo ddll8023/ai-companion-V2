@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated
-
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -17,9 +15,6 @@ class ActivityEvent(BaseModel):
     app_name: str = Field(..., max_length=256, description="应用名称")
     window_title: str | None = Field(None, max_length=512, description="窗口标题")
     started_at: datetime = Field(..., description="活动开始时间")
-    ended_at: datetime | None = Field(None, description="活动结束时间")
-    duration_seconds: int | None = Field(None, description="活动持续时长（秒）")
-    is_idle: bool = Field(False, description="用户是否空闲")
     platform: str = Field(..., pattern="^(macos|windows)$", description="采集来源平台")
     source_id: str | None = Field(None, max_length=64, description="来源去重标识")
 
@@ -39,9 +34,6 @@ class ActivityResponse(BaseModel):
     app_name: str
     window_title: str | None = None
     started_at: datetime
-    ended_at: datetime | None = None
-    duration_seconds: int | None = None
-    is_idle: bool
     platform: str
     privacy_action: str
     masked_app_name: str | None = None
@@ -100,7 +92,6 @@ class PrivacyRuleUpdate(BaseModel):
     )
     rule_value: str | None = Field(None, max_length=4096, description="规则值")
     description: str | None = Field(None, max_length=256, description="规则描述")
-    is_active: bool | None = Field(None, description="是否启用")
     priority: int | None = Field(None, description="优先级")
 
 
@@ -111,7 +102,6 @@ class PrivacyRuleResponse(BaseModel):
     rule_type: str
     rule_value: str
     description: str | None = None
-    is_active: bool
     priority: int
     created_at: datetime
     updated_at: datetime
@@ -123,7 +113,6 @@ class PrivacyRuleListQuery(BaseModel):
     """隐私规则列表查询参数。"""
 
     rule_type: str | None = Field(None, description="按规则类型筛选")
-    is_active: bool | None = Field(None, description="按启用状态筛选")
     page: int = Field(default=1, ge=1, description="页码")
     page_size: int = Field(default=50, ge=1, le=100, description="每页条数")
 

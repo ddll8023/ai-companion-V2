@@ -22,10 +22,10 @@ _VERSION_TABLE = "_db_version"
 # 版本变更记录:
 #   v1 — 初始创建: sessions, messages, model_configs, audit_logs
 #   v2 — 添加: background_tasks
-#   v3 — 添加: goals, tasks (目标与任务模块)
+#   v3 — 历史版本曾添加 goals, tasks（目标与任务模块，现已移除）
 #   v4 — 添加: memories, memory_sources, memory_revisions
 #   v5 — 添加: memory_references, memories_fts (FTS5 虚拟表)
-#   v6 — 添加: data_exports, backup_records, retention_policies (数据治理模块)
+#   v6 — 历史版本曾添加: data_exports, backup_records, retention_policies（保留策略现已移除）
 #   v7 — 添加: memories.embedding (向量嵌入 BLOB 列)
 #   v8 — 添加: audit_logs 字段 (actor_id, actor_name, ip_address)
 #   v9 — 添加: messages.reasoning_content（模型推理过程）
@@ -34,7 +34,9 @@ _VERSION_TABLE = "_db_version"
 #   v13 — 会话级提取字段调整（新数据库直接重建）
 #   v14 — 新增 observations/insights/insight_evidence/insight_relations/
 #         insight_revisions/persona_states/persona_documents 人物理解体系
-_CURRENT_VERSION: int = 14
+#   v15 — 移除 goals、tasks 目标任务表
+#   v16 — 移除未启用的数据治理、恢复、活动时长和规则开关字段
+_CURRENT_VERSION: int = 16
 
 
 def _ensure_version_table(db: Session):
@@ -82,13 +84,8 @@ def _migrate_v1_to_v2(db: Session) -> None:
 
 
 def _migrate_v2_to_v3(db: Session) -> None:
-    """v2 → v3: 新增 goals 和 tasks 表。"""
-    from app.models.goal import Goal, Task  # noqa: F401
-
-    from app.core.database import Base
-
-    Base.metadata.create_all(bind=db.get_bind())
-    logger.info("迁移 v2→v3: 创建 goals, tasks 表")
+    """v2 → v3：保留历史版本号，但不再创建已移除的目标任务表。"""
+    logger.info("迁移 v2→v3: 跳过已移除的 goals、tasks 表")
 
 
 def _migrate_v3_to_v4(db: Session) -> None:
@@ -130,12 +127,12 @@ def _migrate_v4_to_v5(db: Session) -> None:
 
 def _migrate_v5_to_v6(db: Session) -> None:
     """v5 → v6: 新增数据治理模块表。"""
-    from app.models.data_governance import DataExport, BackupRecord, RetentionPolicy  # noqa: F401
+    from app.models.data_governance import DataExport, BackupRecord  # noqa: F401
 
     from app.core.database import Base
 
     Base.metadata.create_all(bind=db.get_bind())
-    logger.info("迁移 v5→v6: 创建 data_exports, backup_records, retention_policies 表")
+    logger.info("迁移 v5→v6: 创建 data_exports, backup_records 表")
 
 
 def _migrate_v6_to_v7(db: Session) -> None:
@@ -239,6 +236,49 @@ def _migrate_v13_to_v14(db: Session) -> None:
     logger.info("迁移 v13→v14: 创建人物理解相关表")
 
 
+def _migrate_v14_to_v15(db: Session) -> None:
+    """v14 → v15：移除目标与任务模块的数据表。"""
+    db.execute(text("DROP TABLE IF EXISTS tasks"))
+    db.execute(text("DROP TABLE IF EXISTS goals"))
+    db.commit()
+    logger.info("迁移 v14→v15: 删除 goals、tasks 表")
+
+
+def _drop_column_if_exists(db: Session, table_name: str, column_name: str) -> None:
+    """在 SQLite 表存在目标字段时删除该字段。"""
+    columns = db.execute(text(f'PRAGMA table_info("{table_name}")')).all()
+    if any(row[1] == column_name for row in columns):
+        db.execute(text(f'ALTER TABLE "{table_name}" DROP COLUMN "{column_name}"'))
+
+
+def _migrate_v15_to_v16(db: Session) -> None:
+    """v15 → v16：移除未启用的半成品功能数据结构。"""
+    db.execute(text("DROP TABLE IF EXISTS retention_policies"))
+
+    # 保留已有侧写内容。若旧版本没有任何 active 侧写，启用最新版本，
+    # 避免移除待审核状态后出现“没有当前侧写”的数据丢失假象。
+    db.execute(text(
+        "UPDATE persona_documents SET is_active = 1 "
+        "WHERE is_active = 0 "
+        "AND NOT EXISTS (SELECT 1 FROM persona_documents WHERE is_active = 1) "
+        "AND id = (SELECT id FROM persona_documents ORDER BY version DESC, id DESC LIMIT 1)"
+    ))
+
+    for table_name, column_name in (
+        ("backup_records", "backup_type"),
+        ("backup_records", "restored_at"),
+        ("persona_documents", "is_pending_review"),
+        ("activities", "ended_at"),
+        ("activities", "duration_seconds"),
+        ("activities", "is_idle"),
+        ("privacy_rules", "is_active"),
+    ):
+        _drop_column_if_exists(db, table_name, column_name)
+
+    db.commit()
+    logger.info("迁移 v15→v16: 删除未启用功能的数据结构")
+
+
 # 迁移注册表：key=目标版本号，value=迁移函数
 _VERSION_MIGRATIONS: dict[int, Callable[[Session], None]] = {
     2: _migrate_v1_to_v2,
@@ -254,6 +294,8 @@ _VERSION_MIGRATIONS: dict[int, Callable[[Session], None]] = {
     12: _migrate_v11_to_v12,
     13: _migrate_v12_to_v13,
     14: _migrate_v13_to_v14,
+    15: _migrate_v14_to_v15,
+    16: _migrate_v15_to_v16,
 }
 
 

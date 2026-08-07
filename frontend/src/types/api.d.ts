@@ -178,16 +178,6 @@ export interface Memory {
   updated_at: string | null
 }
 
-/** 创建记忆请求 */
-export interface MemoryCreate {
-  content: string
-  type?: string
-  importance?: number
-  session_id?: number | null
-  source_type?: string
-  source_ids?: number[]
-}
-
 /** 纠正记忆请求 */
 export interface MemoryCorrect {
   content: string
@@ -276,7 +266,6 @@ export interface PersonaDocument {
   is_active: boolean
   change_summary: string | null
   edited_by: string
-  is_pending_review: boolean
   created_at: string | null
 }
 
@@ -290,116 +279,6 @@ export interface PersonaListQuery {
 
 
 
-// ── 目标与任务类型 ──────────────────────────────────────────────────────────
-
-/** 目标 */
-export interface Goal {
-  id: number
-  title: string
-  description: string | null
-  status: number
-  target_date: string | null
-  progress: number
-  created_at: string | null
-  updated_at: string | null
-}
-
-/** 创建目标请求 */
-export interface GoalCreate {
-  title: string
-  description?: string
-  target_date?: string
-}
-
-/** 更新目标请求 */
-export interface GoalUpdate {
-  title?: string
-  description?: string
-  status?: number
-  target_date?: string
-}
-
-/** 目标列表查询参数 */
-export interface GoalListQuery {
-  status?: number
-  keyword?: string
-  page?: number
-  page_size?: number
-}
-
-/** 任务 */
-export interface Task {
-  id: number
-  goal_id: number | null
-  title: string
-  description: string | null
-  status: number
-  priority: number
-  is_from_suggestion: number
-  suggestion_status: number
-  suggestion_data: string | null
-  created_at: string | null
-  updated_at: string | null
-}
-
-/** 任务（含关联目标标题） */
-export interface TaskWithGoal {
-  id: number
-  goal_id: number | null
-  goal_title: string | null
-  title: string
-  description: string | null
-  status: number
-  priority: number
-  is_from_suggestion: number
-  suggestion_status: number
-  suggestion_data: string | null
-  created_at: string | null
-  updated_at: string | null
-}
-
-/** 创建任务请求 */
-export interface TaskCreate {
-  goal_id?: number | null
-  title: string
-  description?: string
-  priority?: number
-}
-
-/** 更新任务请求 */
-export interface TaskUpdate {
-  title?: string
-  description?: string
-  status?: number
-  priority?: number
-  goal_id?: number | null
-}
-
-/** 任务列表查询参数 */
-export interface TaskListQuery {
-  goal_id?: number
-  status?: number
-  suggestion_status?: number
-  is_suggestion?: number
-  keyword?: string
-  page?: number
-  page_size?: number
-}
-
-/** 创建 AI 建议任务请求 */
-export interface TaskSuggestionCreate {
-  title: string
-  description?: string
-  priority?: number
-  suggestion_data?: string
-}
-
-/** 目标详情（含关联任务） */
-export interface GoalDetail {
-  goal: Goal
-  tasks: Task[]
-}
-
 // ── 活动类型 ─────────────────────────────────────────────────────────────────
 
 /** 活动记录 */
@@ -408,9 +287,6 @@ export interface Activity {
   app_name: string
   window_title: string | null
   started_at: string
-  ended_at: string | null
-  duration_seconds: number | null
-  is_idle: boolean
   platform: string
   privacy_action: string
   masked_app_name: string | null
@@ -423,9 +299,6 @@ export interface ActivityEvent {
   app_name: string
   window_title?: string
   started_at: string
-  ended_at?: string
-  duration_seconds?: number
-  is_idle?: boolean
   platform: string
   source_id?: string
 }
@@ -462,7 +335,6 @@ export interface PrivacyRule {
   rule_type: string
   rule_value: string
   description: string | null
-  is_active: boolean
   priority: number
   created_at: string
   updated_at: string
@@ -481,14 +353,12 @@ export interface PrivacyRuleUpdate {
   rule_type?: string
   rule_value?: string
   description?: string
-  is_active?: boolean
   priority?: number
 }
 
 /** 隐私规则列表查询参数 */
 export interface PrivacyRuleListQuery {
   rule_type?: string
-  is_active?: boolean
   page?: number
   page_size?: number
 }
@@ -549,20 +419,13 @@ export interface DataExportResponse {
   created_at: string | null
 }
 
-/** 创建备份请求 */
-export interface BackupCreateRequest {
-  backup_type: 'manual' | 'auto'
-}
-
 /** 备份响应 */
 export interface BackupResponse {
   id: number
-  backup_type: string
   file_path: string
   file_size_bytes: number | null
   status: string
   error_message: string | null
-  restored_at: string | null
   created_at: string | null
 }
 
@@ -570,47 +433,6 @@ export interface BackupResponse {
 export interface BackupListQuery {
   page?: number
   page_size?: number
-}
-
-/** 恢复请求 */
-export interface RestoreRequest {
-  backup_id: number
-}
-
-/** 恢复响应 */
-export interface RestoreResponse {
-  backup_id: number
-  status: string
-  file_path: string
-  message: string
-  restored_at: string
-  database_was_recreated: boolean
-}
-
-/** 创建保留策略请求 */
-export interface RetentionPolicyCreate {
-  target_type: string
-  retention_days: number
-  is_enabled?: boolean
-  description?: string
-}
-
-/** 更新保留策略请求 */
-export interface RetentionPolicyUpdate {
-  retention_days?: number
-  is_enabled?: boolean
-  description?: string
-}
-
-/** 保留策略响应 */
-export interface RetentionPolicyResponse {
-  id: number
-  target_type: string
-  retention_days: number
-  is_enabled: boolean
-  description: string | null
-  created_at: string | null
-  updated_at: string | null
 }
 
 /** 清除全部数据请求 */
@@ -635,8 +457,6 @@ export interface DataVolumeStats {
   memory_references: number
   activities: number
   privacy_rules: number
-  goals: number
-  tasks: number
   observations: number
   insights: number
   insight_evidence: number
@@ -648,7 +468,6 @@ export interface DataVolumeStats {
   model_configs: number
   data_exports: number
   backup_records: number
-  retention_policies: number
 }
 
 // ── 系统状态类型 ──────────────────────────────────────────────────────────
@@ -720,7 +539,6 @@ export interface SystemStatusResponse {
     status: 'ok' | 'error'
     error_message?: string | null
     privacy_rules_total: number
-    privacy_rules_active: number
     activities_today: number
     activities_total: number
   }

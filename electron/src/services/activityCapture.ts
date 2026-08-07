@@ -33,9 +33,6 @@ export interface ActivityEvent {
   app_name: string;
   window_title: string | null;
   started_at: string;
-  ended_at: string | null;
-  duration_seconds: number | null;
-  is_idle: boolean;
   platform: string;
   source_id: string | null;
 }
@@ -44,7 +41,6 @@ export interface ActivityEvent {
 interface LocalPrivacyRule {
   type: string;
   value: string;
-  active: boolean;
 }
 
 /** 采集状态。 */
@@ -66,9 +62,6 @@ type StatusCallback = (status: CaptureStatus) => void;
 
 /** 默认采集间隔（毫秒） */
 const DEFAULT_POLL_INTERVAL_MS = 5000;
-
-/** 最小空闲阈值（秒），超过此值认为用户空闲 */
-const IDLE_THRESHOLD_SECONDS = 300; // 5 分钟无操作
 
 /** 后端的活动事件提交端点 */
 const SUBMIT_EVENTS_PATH = '/api/v1/activities/events';
@@ -97,7 +90,7 @@ export class ActivityCaptureManager {
   /** 本地隐私规则缓存 */
   private _privacyRules: LocalPrivacyRule[] = [];
 
-  /** 上一次成功采集的应用信息（用于去重和持续时间计算） */
+  /** 上一次成功采集的应用信息（用于去重） */
   private _lastCapture: {
     appName: string;
     windowTitle: string | null;
@@ -304,10 +297,9 @@ export class ActivityCaptureManager {
    * 执行一次采集周期。
    *
    * 1. 获取前台应用信息
-   * 2. 获取用户空闲状态
-   * 3. 本地隐私规则检查（硬阻断层）
-   * 4. 去重判断
-   * 5. 构造事件并加入缓冲区
+   * 2. 本地隐私规则检查（硬阻断层）
+   * 3. 去重判断
+   * 4. 构造事件并加入缓冲区
    */
   private async _capture(): Promise<void> {
     if (!this._running) return;
@@ -335,11 +327,7 @@ export class ActivityCaptureManager {
         return;
       }
 
-      // 2. 获取用户空闲状态
-      const idleInfo = await this._adapter.getIdleTime();
-      const isIdle = idleInfo.success && idleInfo.idleSeconds >= IDLE_THRESHOLD_SECONDS;
-
-      // 3. 本地隐私规则检查（采集前硬阻断）
+      // 2. 本地隐私规则检查（采集前硬阻断）
       const localCheck = this._localPrivacyCheck(appInfo.appName, appInfo.windowTitle);
       if (!localCheck.allow) {
         this._status.eventsSkipped++;
@@ -350,7 +338,7 @@ export class ActivityCaptureManager {
         return;
       }
 
-      // 4. 去重判断：连续相同应用合并
+      // 3. 去重判断：连续相同应用合并
       const now = new Date().toISOString();
       const sourceId = this._generateSourceId(appInfo);
 
@@ -362,14 +350,11 @@ export class ActivityCaptureManager {
         }
       }
 
-      // 5. 构造事件
+      // 4. 构造事件
       const event: ActivityEvent = {
         app_name: appInfo.appName,
         window_title: appInfo.windowTitle,
         started_at: now,
-        ended_at: null,
-        duration_seconds: null,
-        is_idle: isIdle,
         platform: getPlatform(),
         source_id: sourceId,
       };
@@ -382,7 +367,7 @@ export class ActivityCaptureManager {
         sourceId,
       };
 
-      // 6. 加入缓冲区
+      // 5. 加入缓冲区
       this._eventBuffer.push(event);
       this._status.lastCaptureTime = now;
       this._status.lastAppName = appInfo.appName;
@@ -393,7 +378,7 @@ export class ActivityCaptureManager {
       }
 
       this._notifyStatus();
-      console.log(`[ActivityCapture] 采集: ${appInfo.appName}, idle=${isIdle}`);
+      console.log(`[ActivityCapture] 采集: ${appInfo.appName}`);
     } catch (err: unknown) {
       this._status.errors++;
       console.error('[ActivityCapture] 采集异常:', err);
@@ -434,10 +419,8 @@ export class ActivityCaptureManager {
     const currentHour = now.getHours();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
 
-    // 先分类规则，按优先级排序
-    const activeRules = this._privacyRules.filter((r) => r.active);
-
-    for (const rule of activeRules) {
+    // 规则已在后端按优先级排序
+    for (const rule of this._privacyRules) {
       try {
         switch (rule.type) {
           // ── 全局暂停 ─────────────────────────────────────────────
@@ -589,7 +572,6 @@ export class ActivityCaptureManager {
         this._privacyRules = response.data.lists.map((rule: any) => ({
           type: rule.rule_type || '',
           value: rule.rule_value || '',
-          active: rule.is_active !== false,
         }));
       }
     } catch {

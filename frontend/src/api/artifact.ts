@@ -1,5 +1,5 @@
 import { getAdapter } from '@/composables/useApi'
-import type { AiArtifact, Memory, Task } from '@/types/api'
+import type { AiArtifact, Memory } from '@/types/api'
 
 const api = getAdapter()
 
@@ -10,4 +10,3 @@ export function saveAiArtifact(sessionId: number, assistantMessageId: number) {
   })
 }
 export function rememberAiArtifact(id: number) { return api.post<Memory>(`/api/v1/ai-artifacts/${id}/remember`) }
-export function createTaskSuggestionFromArtifact(id: number) { return api.post<Task>(`/api/v1/ai-artifacts/${id}/task-suggestion`) }

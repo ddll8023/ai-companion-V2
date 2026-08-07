@@ -23,16 +23,6 @@ export interface FrontmostAppInfo {
   error: string | null;
 }
 
-/** 空闲时间信息。 */
-export interface IdleTimeInfo {
-  /** 空闲秒数 */
-  idleSeconds: number;
-  /** 获取是否成功 */
-  success: boolean;
-  /** 错误信息 */
-  error: string | null;
-}
-
 /**
  * 平台活动采集适配器接口。
  *
@@ -45,9 +35,6 @@ export interface ActivityPlatformAdapter {
 
   /** 仅获取前台应用名称（降级场景，无需窗口标题权限）。 */
   getFrontmostAppName(): Promise<string | null>;
-
-  /** 获取用户空闲时间（秒）。 */
-  getIdleTime(): Promise<IdleTimeInfo>;
 
   /** 检测当前平台 Accessibility 权限状态。 */
   checkAccessibilityPermission(): Promise<PermissionStatusType>;

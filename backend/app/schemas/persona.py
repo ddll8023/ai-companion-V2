@@ -76,7 +76,6 @@ class PersonaDocumentResponse(BaseModel):
     is_active: bool
     change_summary: str | None = None
     edited_by: str
-    is_pending_review: bool
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}

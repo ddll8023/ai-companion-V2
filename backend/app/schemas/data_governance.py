@@ -43,22 +43,14 @@ class DataExportResponse(BaseModel):
 # ── 备份 ──────────────────────────────────────────────────────────────────────
 
 
-class BackupCreateRequest(BaseModel):
-    """创建备份请求。"""
-
-    backup_type: str = Field(default="manual", description="备份类型: manual/auto")
-
-
 class BackupResponse(BaseModel):
     """备份记录响应。"""
 
     id: int
-    backup_type: str = "manual"
     file_path: str
     file_size_bytes: int | None = None
     status: str = "completed"
     error_message: str | None = None
-    restored_at: datetime | None = None
     created_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
@@ -69,57 +61,6 @@ class BackupListQuery(BaseModel):
 
     page: int = Field(default=1, ge=1)
     page_size: int = Field(default=20, ge=1, le=100)
-
-
-class RestoreRequest(BaseModel):
-    """恢复请求。"""
-
-    backup_id: int = Field(..., description="备份记录 ID")
-
-
-class RestoreResponse(BaseModel):
-    """恢复响应。"""
-
-    backup_id: int
-    status: str
-    file_path: str
-    message: str
-    restored_at: datetime
-    database_was_recreated: bool = False
-
-
-# ── 保留策略 ──────────────────────────────────────────────────────────────────
-
-
-class RetentionPolicyCreate(BaseModel):
-    """创建/更新保留策略请求。"""
-
-    target_type: str = Field(..., description="目标数据类型")
-    retention_days: int = Field(default=90, ge=1, description="保留天数")
-    is_enabled: bool = Field(default=True, description="是否启用")
-    description: str | None = Field(default=None, description="策略描述")
-
-
-class RetentionPolicyUpdate(BaseModel):
-    """更新保留策略请求。"""
-
-    retention_days: int | None = Field(default=None, ge=1, description="保留天数")
-    is_enabled: bool | None = Field(default=None, description="是否启用")
-    description: str | None = Field(default=None, description="策略描述")
-
-
-class RetentionPolicyResponse(BaseModel):
-    """保留策略响应。"""
-
-    id: int
-    target_type: str
-    retention_days: int
-    is_enabled: bool
-    description: str | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 # ── 清除全部数据 ──────────────────────────────────────────────────────────────
@@ -156,8 +97,6 @@ class DataVolumeStats(BaseModel):
     memory_references: int = 0
     activities: int = 0
     privacy_rules: int = 0
-    goals: int = 0
-    tasks: int = 0
     observations: int = 0
     insights: int = 0
     insight_evidence: int = 0
@@ -169,7 +108,6 @@ class DataVolumeStats(BaseModel):
     model_configs: int = 0
     data_exports: int = 0
     backup_records: int = 0
-    retention_policies: int = 0
 
 
 class ExportListQuery(BaseModel):

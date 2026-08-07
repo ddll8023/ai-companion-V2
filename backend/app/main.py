@@ -118,12 +118,10 @@ from app.api import artifacts as api_artifacts
 from app.api import audit as api_audit
 from app.api import chat as api_chat
 from app.api import data as api_data
-from app.api import goals as api_goals
 from app.api import memories as api_memories
 from app.api import models as api_models
 from app.api import persona as api_persona
 from app.api import retrieval as api_retrieval
-from app.api import statistics as api_statistics
 from app.api import system as api_system
 from app.api import tasks as api_tasks
 
@@ -132,12 +130,10 @@ app.include_router(api_artifacts.router)
 app.include_router(api_audit.router)
 app.include_router(api_chat.router)
 app.include_router(api_data.router)
-app.include_router(api_goals.router)
 app.include_router(api_memories.router)
 app.include_router(api_models.router)
 app.include_router(api_persona.router)
 app.include_router(api_retrieval.router)
-app.include_router(api_statistics.router)
 app.include_router(api_system.router)
 app.include_router(api_tasks.router)
 

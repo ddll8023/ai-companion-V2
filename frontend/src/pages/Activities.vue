@@ -108,9 +108,6 @@
                 <!-- 时间 -->
                 <div class="mt-1 flex items-center gap-3 text-xs text-text-tertiary">
                   <span>{{ formatTime(item.started_at) }}</span>
-                  <span v-if="item.duration_seconds">
-                    持续 {{ formatDuration(item.duration_seconds) }}
-                  </span>
                 </div>
               </div>
               <!-- 删除按钮 -->
@@ -183,7 +180,7 @@ import { onMounted, reactive, ref } from 'vue'
 import LoadingState from '@/components/custom/LoadingState.vue'
 import EmptyState from '@/components/custom/EmptyState.vue'
 import ErrorState from '@/components/custom/ErrorState.vue'
-import { formatTime, formatDuration } from '@/utils/format'
+import { formatTime } from '@/utils/format'
 import {
   listActivities,
   getActivityStats,

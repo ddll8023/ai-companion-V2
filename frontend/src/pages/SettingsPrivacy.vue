@@ -137,14 +137,6 @@
               <div class="flex-1 min-w-0">
                 <div class="flex items-center gap-2 mb-1">
                   <span class="text-sm font-medium text-text">{{ ruleTypeLabel(rule.rule_type) }}</span>
-                  <span
-                    class="inline-flex items-center px-1.5 py-0.5 text-xs rounded"
-                    :class="rule.is_active
-                      ? 'bg-green-100 text-green-700'
-                      : 'bg-gray-100 text-gray-500'"
-                  >
-                    {{ rule.is_active ? '启用' : '禁用' }}
-                  </span>
                   <span class="text-xs text-text-tertiary">优先级: {{ rule.priority }}</span>
                 </div>
                 <p class="text-xs text-text-secondary break-all font-mono bg-bg p-2 rounded mt-1">
@@ -503,7 +495,6 @@ async function handleSave() {
       await updatePrivacyRule(editingRule.value.id, {
         rule_value: form.rule_value,
         description: form.description || undefined,
-        is_active: undefined,
         priority: form.priority,
       })
     } else {

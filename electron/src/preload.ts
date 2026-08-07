@@ -85,7 +85,6 @@ const api = {
    * 流式对话（密钥由主进程注入，Renderer 不持有密钥）。
    * 通过事件回调逐 token 推送，不再一次性返回。
    *
-   * @returns 清理函数，用于取消监听和停止流
    */
   streamChat: (
     data: { sessionId: number; content: string; configId: number; regenerateMessageId?: number },
@@ -95,7 +94,7 @@ const api = {
       onDone: (messageId: number | null) => void;
       onError: (message: string) => void;
     },
-  ): (() => void) => {
+  ): void => {
     const handler = (_event: Electron.IpcRendererEvent, eventData: any) => {
       if (eventData.type === 'token' && eventData.content) {
         callbacks.onToken(eventData.content);
@@ -114,10 +113,6 @@ const api = {
     ipcRenderer.on(IPC_CHANNELS.CHAT_STREAM_EVENT, handler);
     ipcRenderer.send(IPC_CHANNELS.CHAT_STREAM, data);
 
-    // 返回清理函数
-    return () => {
-      ipcRenderer.removeListener(IPC_CHANNELS.CHAT_STREAM_EVENT, handler);
-    };
   },
 
   /** 触发会话级记忆与人物理解提取（密钥由主进程注入，Renderer 不持有密钥） */

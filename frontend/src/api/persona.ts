@@ -34,7 +34,3 @@ export async function editPersonaDocument(content: string, edited_sections: Reco
 export async function reflectPersona() {
   return api.post<{ task_id: number }>('/api/v1/persona/reflect')
 }
-
-export async function getBehaviorStats(query: { days: number }) {
-  return api.post('/api/v1/statistics/behavior', query)
-}

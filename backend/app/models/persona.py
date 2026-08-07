@@ -122,4 +122,3 @@ class PersonaDocument(BaseModel):
     is_active = Column(Boolean, nullable=False, default=True, index=True)
     change_summary = Column(String(512), nullable=True)
     edited_by = Column(String(16), nullable=False, default="system")
-    is_pending_review = Column(Boolean, nullable=False, default=False)

@@ -1,8 +1,8 @@
 /**
  * macOS 活动采集适配器。
  *
- * 使用 macOS 原生工具（osascript、ioreg）获取前台应用信息、
- * 窗口标题、用户空闲状态和系统权限状态。
+ * 使用 macOS 原生工具（osascript）获取前台应用信息、
+ * 窗口标题和系统权限状态。
  *
  * 职责边界：
  * - 只负责与 macOS 系统交互获取原始数据
@@ -22,16 +22,6 @@ export interface FrontmostAppInfo {
   /** 窗口标题（获取失败时为 null） */
   windowTitle: string | null;
   /** 当前是否成功获取 */
-  success: boolean;
-  /** 错误信息 */
-  error: string | null;
-}
-
-/** 空闲时间信息。 */
-export interface IdleTimeInfo {
-  /** 空闲秒数 */
-  idleSeconds: number;
-  /** 获取是否成功 */
   success: boolean;
   /** 错误信息 */
   error: string | null;
@@ -125,41 +115,6 @@ export async function getFrontmostAppName(): Promise<string | null> {
     return result || null;
   } catch {
     return null;
-  }
-}
-
-// ── 用户空闲时间 ──────────────────────────────────────────────────────────
-
-/**
- * 获取用户空闲时间（秒）。
- *
- * 使用 `ioreg` 读取 IOHIDSystem 的 HIDIdleTime 属性，
- * 该值表示自上次用户输入事件（键盘/鼠标/触控板）以来的纳米秒数。
- */
-export async function getIdleTime(): Promise<IdleTimeInfo> {
-  try {
-    const result = await execCommand(
-      `ioreg -c IOHIDSystem | awk '/HIDIdleTime/ {gsub(/[^0-9a-fA-F]/, "", $NF); print $NF; exit}'`,
-      5000,
-    );
-
-    if (!result) {
-      return { idleSeconds: 0, success: false, error: '无法读取空闲时间' };
-    }
-
-    const idleNanoseconds = parseInt(result, 16);
-    if (isNaN(idleNanoseconds)) {
-      return { idleSeconds: 0, success: false, error: '空闲时间解析失败' };
-    }
-
-    return {
-      idleSeconds: Math.floor(idleNanoseconds / 1000000000),
-      success: true,
-      error: null,
-    };
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { idleSeconds: 0, success: false, error: message };
   }
 }
 

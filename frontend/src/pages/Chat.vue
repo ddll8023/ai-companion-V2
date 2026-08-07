@@ -371,9 +371,6 @@
                     <button class="p-1.5 rounded-md text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors" title="采纳为候选记忆" @click="rememberAiContent(row.msg!)">
                       <font-awesome-icon :icon="['fas', 'brain']" class="text-xs" />
                     </button>
-                    <button class="p-1.5 rounded-md text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors" title="创建任务建议" @click="createTaskFromAiContent(row.msg!)">
-                      <font-awesome-icon :icon="['fas', 'list-check']" class="text-xs" />
-                    </button>
                   </template>
                   <button
                     class="ml-auto p-1.5 rounded-md text-text-tertiary hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
@@ -489,15 +486,6 @@
               >
                 <font-awesome-icon :icon="['fas', 'paper-plane']" class="text-sm" />
               </button>
-              <!-- 停止按钮 -->
-              <button
-                v-else
-                class="flex-shrink-0 w-10 h-10 flex items-center justify-center rounded-xl bg-error text-white hover:bg-error/90 transition-colors"
-                title="停止生成"
-                @click="handleStop"
-              >
-                <font-awesome-icon :icon="['fas', 'stop']" class="text-sm" />
-              </button>
             </div>
             <p v-if="errorMessage" class="mt-2 text-xs text-error">{{ errorMessage }}</p>
             <p class="mt-1.5 text-[11px] text-text-tertiary/70">Enter 发送 · Shift+Enter 换行</p>
@@ -549,7 +537,6 @@ const inputText = ref('')
 const isGenerating = ref(false)
 const streamingContent = ref('')
 const streamingReasoning = ref('')
-const abortController = ref<AbortController | null>(null)
 const showDeleteDialog = ref(false)
 const deleteTarget = ref<Session | null>(null)
 const deletingSessionId = ref<number | null>(null)
@@ -886,16 +873,12 @@ async function handleSend() {
       : m,
   )
 
-  // 创建 AbortController 用于中止
-  abortController.value = new AbortController()
-
   await chatApi.streamChat(
     currentSessionId.value,
     content,
     activeConfig.value?.id || 0,
     handleStreamEvent,
     handleStreamError,
-    abortController.value.signal,
   )
 }
 
@@ -975,32 +958,6 @@ function handleStreamError(err: Error) {
   }
 }
 
-function handleStop() {
-  // 中止 SSE 连接 → 触发后端 GeneratorExit → 后端标记为 aborted
-  abortController.value?.abort()
-
-  // 已有流式内容作为已中止消息保留
-  if (streamingContent.value || streamingReasoning.value) {
-    const partialMessage = buildAssistantMessage({
-      id: Date.now(),
-      content: streamingContent.value,
-      reasoningContent: streamingReasoning.value,
-      status: 'aborted',
-    })
-    messages.value.push(partialMessage)
-  }
-  streamingContent.value = ''
-  streamingReasoning.value = ''
-  isGenerating.value = false
-  errorMessage.value = null
-  focusInput()
-  // 重新生成中止：后端消息 ID 与本地临时 ID 不一致，刷新
-  if (regeneratingId.value !== null) {
-    regeneratingId.value = null
-    void fetchMessages()
-  }
-}
-
 async function handleRegenerate(msg: Message) {
   if (isGenerating.value || !currentSessionId.value || !canChat.value) return
   // 本地移除旧回复，等待后端删除并重新生成
@@ -1010,14 +967,12 @@ async function handleRegenerate(msg: Message) {
   streamingContent.value = ''
   streamingReasoning.value = ''
   isGenerating.value = true
-  abortController.value = new AbortController()
   await chatApi.streamChat(
     currentSessionId.value,
     '', // 重新生成模式：后端复用该回复对应的用户消息
     activeConfig.value?.id || 0,
     handleStreamEvent,
     handleStreamError,
-    abortController.value.signal,
     msg.id,
   )
 }
@@ -1219,13 +1174,6 @@ async function rememberAiContent(message: Message) {
     const artifact = await artifactApi.saveAiArtifact(message.session_id, message.id)
     await artifactApi.rememberAiArtifact(artifact.data!.id)
   } catch (e: unknown) { errorMessage.value = e instanceof Error ? e.message : '创建候选记忆失败' }
-}
-
-async function createTaskFromAiContent(message: Message) {
-  try {
-    const artifact = await artifactApi.saveAiArtifact(message.session_id, message.id)
-    await artifactApi.createTaskSuggestionFromArtifact(artifact.data!.id)
-  } catch (e: unknown) { errorMessage.value = e instanceof Error ? e.message : '创建任务建议失败' }
 }
 
 // ── 辅助函数 ──────────────────────────────────────────────────────────────

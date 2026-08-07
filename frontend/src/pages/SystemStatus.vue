@@ -517,7 +517,7 @@ onMounted(fetchData)
                 <span>隐私规则</span>
               </div>
               <p class="mt-2 text-sm font-medium text-text">
-                {{ status.activity_collection.privacy_rules_active }} / {{ status.activity_collection.privacy_rules_total }} 激活
+                {{ status.activity_collection.privacy_rules_total }} 条
               </p>
             </div>
 
